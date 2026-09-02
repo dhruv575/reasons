@@ -144,8 +144,7 @@ function main(argv: string[]) {
         const { status, startLine, endLine } = it.res;
         if (status === "exact") continue;
         if (status === "moved") moved++; else if (status === "fuzzy") fuzzy++; else stale++;
-        console.log(fmt(it) + "
-");
+        console.log(fmt(it) + "\n");
         if (fix && status !== "stale" && startLine && endLine) {
           const abs = join(root, f);
           it.reason.anchor = makeAnchor(readLines(abs), startLine, endLine);
