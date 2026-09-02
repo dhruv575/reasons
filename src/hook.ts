@@ -11,11 +11,12 @@
  * Everything is best-effort and silent on failure: a broken hook must never
  * get in the agent's way.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { toRepoPath, loadReasons } from "./store.js";
-import { resolveFile, cliCmd, type Resolved } from "./cli.js";
+import { resolveFile, type Resolved } from "./locate.js";
+import { cliCmd } from "./env.js";
 
 interface HookInput {
   session_id?: string;
@@ -45,6 +46,11 @@ const MAX_NUDGES = 3;
 function sessionPath(id: string) {
   const dir = join(tmpdir(), "reasons-sessions");
   mkdirSync(dir, { recursive: true });
+  // Housekeeping: session files older than a week are from sessions that no longer exist.
+  try {
+    const cutoff = Date.now() - 7 * 86400_000;
+    for (const f of readdirSync(dir)) { const p = join(dir, f); if (statSync(p).mtimeMs < cutoff) unlinkSync(p); }
+  } catch { /* ignore */ }
   return join(dir, `${id.replace(/[^\w-]/g, "_")}.json`);
 }
 function loadSession(id: string): Session {
@@ -73,12 +79,20 @@ function onRead(root: string, input: HookInput) {
   if (!filePath) return;
   const found = liveReasons(root, filePath);
   if (!found?.live.length) return;
-  const body = found.live.map((r) => {
+  // A windowed Read only gets the reasons inside the window, plus a count of the rest.
+  const offset = Number(input.tool_input?.offset ?? 0) || 0, limit = Number(input.tool_input?.limit ?? 0) || 0;
+  const lo = offset > 0 ? offset : 1, hi = limit > 0 ? lo + limit - 1 : Infinity;
+  const inWindow = found.live.filter((r) => r.res.startLine! <= hi && r.res.endLine! >= lo);
+  const outside = found.live.length - inWindow.length;
+  if (!inWindow.length && !outside) return;
+  const body = inWindow.map((r) => {
     const conf = r.res.status === "fuzzy" ? " (approximate location)" : "";
-    return `- ${where(r)}${conf}: ${r.reason.note}  [id ${r.reason.id}]`;
+    const link = r.reason.link ? ` (${r.reason.link})` : "";
+    return `- ${where(r)}${conf}: ${r.reason.note}${link}  [id ${r.reason.id}]`;
   }).join("\n");
+  const more = outside ? `\n(${outside} more outside the lines you read; \`${cliCmd()} show ${found.repoFile}\` lists all)` : "";
   emit("PostToolUse",
-    `Recorded reasons for ${found.repoFile} (from .reasons/, authoritative; do not "clean up" these lines without addressing the note):\n${body}`);
+    `Recorded reasons for ${found.repoFile} (from .reasons/, authoritative; do not "clean up" these lines without addressing the note):\n${body || "(none in this window)"}${more}`);
 }
 
 /** 1-based line range that `needle` occupies in `haystack`, or undefined. */

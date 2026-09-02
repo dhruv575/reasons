@@ -12,6 +12,7 @@ export interface Reason {
   commit?: string;         // HEAD at creation, if in git
   author?: string;         // git user.name, or an agent identifier
   source?: string;         // e.g. "cli", "claude-code", a session URL
+  link?: string;           // issue, PR, or doc with the longer story
 }
 
 export interface Anchor {

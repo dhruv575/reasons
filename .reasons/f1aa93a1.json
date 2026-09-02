@@ -1,0 +1,26 @@
+{
+  "id": "f1aa93a1",
+  "file": "src/locate.ts",
+  "note": "a reason recorded on a deleted file may only claim a new home where the text AND neighbours match; identical text alone (a lone return, a common import) would attach notes to unrelated files",
+  "anchor": {
+    "lines": [
+      "  return (res.status === \"exact\" || res.status === \"moved\") && res.context >= MOVED_CTX_FLOOR;"
+    ],
+    "before": [
+      "",
+      "/** A cross-file claim needs identical text *and* familiar neighbours; a lone `return null;` proves nothing. */",
+      "function convincingElsewhere(res: Resolution): boolean {"
+    ],
+    "after": [
+      "}",
+      "",
+      "/** Reasons for `repoFile`: its own, plus orphans (recorded file gone) that resolve convincingly here. */"
+    ],
+    "startLine": 26,
+    "hash": "8bf5edc783af"
+  },
+  "createdAt": "2026-09-02T02:14:49.422Z",
+  "commit": "4b43ecf",
+  "author": "Dhruv Gupta",
+  "source": "claude-code"
+}

@@ -7,16 +7,16 @@
       "const FUZZY_THRESHOLD = 0.6;"
     ],
     "before": [
-      "  score: number;        // 0..1 similarity of matched region to anchor",
+      "  context: number;      // 0..1 how well the neighbours at the match agree with the recorded context",
       "}",
       ""
     ],
     "after": [
-      "",
-      "/** Similarity between two lines: 1 if equal after whitespace normalisation, else token Jaccard. */",
-      "function lineSim(a: string, b: string): number {"
+      "/** A \"moved\" exact match must keep some of its neighbours, or it's a coincidental copy elsewhere. */",
+      "export const MOVED_CTX_FLOOR = 0.2;",
+      "/** Trivial anchors (`}`, `});`, `return;`) recur everywhere, so they need a stronger neighbourhood. */"
     ],
-    "startLine": 13,
+    "startLine": 14,
     "hash": "872b3e3a5261"
   },
   "createdAt": "2026-09-02T01:01:59.211Z",

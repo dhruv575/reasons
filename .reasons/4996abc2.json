@@ -16,7 +16,7 @@
       "const REVERT_CMD = new RegExp(AT_CMD + String.raw`git\\s+(?:revert|restore|checkout\\s+(?:--|HEAD)|reset\\s+--hard|stash\\s+pop)(?=\\s|$)`);",
       "const FAIL_SIGNS = /\\b(FAIL|failed|failing|not ok|AssertionError|Error:|✖|✗|Traceback|panicked|FAILED)\\b|\\bfail\\s+[1-9]/;"
     ],
-    "startLine": 39,
+    "startLine": 40,
     "hash": "98a074715dec"
   },
   "createdAt": "2026-09-02T01:55:46.515Z",

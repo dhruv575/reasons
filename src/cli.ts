@@ -1,33 +1,33 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import {
-  repoRoot, toRepoPath, makeAnchor, normalize, newReason, saveReason, deleteReason, loadReasons, type Reason,
+  repoRoot, toRepoPath, makeAnchor, normalize, newReason, saveReason, deleteReason, loadReasons,
 } from "./store.js";
-import { resolveAnchor, type Resolution } from "./resolve.js";
+import { resolveFile, relocate, readLines, type Resolved } from "./locate.js";
+import { cliCmd } from "./env.js";
 import { runHook } from "./hook.js";
 import { runEval, formatEval } from "./eval.js";
 
 const USAGE = `reasons - pin the *why* to the code it explains
 
   reasons add <file>:<start>[-<end>] "<note>"   record a reason for a line range
-  reasons add --json                             same, from stdin: {"file","start","end","note","source"}
-  reasons show <file> [--json]                   print live reasons for a file
-  reasons list [--json]                          print every reason in the repo
-  reasons doctor [--fix]                         list moved/fuzzy/stale reasons; --fix re-pins moved and fuzzy ones
+  reasons add --json                             same, from stdin: {"file","start","end","note","source","link"}
+  reasons show <file>[:<line>] [--json]          live reasons for a file, or just those covering a line
+  reasons why <file>:<line>                      alias for show
+  reasons list [--json]                          every reason in the repo
+  reasons doctor [--fix] [--prune]               report moved/fuzzy/stale/orphaned reasons;
+                                                 --fix re-pins moved, fuzzy and relocated ones; --prune deletes stale
   reasons rm <id>                                delete a reason
-  reasons hook                                   Claude Code hook entry point (reads JSON on stdin)
   reasons init                                   install the hooks + CLAUDE.md note into the current repo
+  reasons hook                                   Claude Code hook entry point (reads JSON on stdin)
+  reasons mcp                                    serve reasons over MCP (stdio) for other agents
   reasons eval [--repo p] [--commits N] [--samples M] [--span S] [--seed K] [-v]
                                                  measure anchor survival across a repo's git history
 
 Options: --source <name>   who/what recorded it (default: cli)
+         --link <url>      issue, PR, or doc that explains more
 `;
-
-function readLines(path: string): string[] {
-  return readFileSync(path, "utf8").split(/\r?\n/);
-}
 
 function parseTarget(t: string): { file: string; start: number; end: number } {
   const m = /^(.+?):(\d+)(?:-(\d+))?$/.exec(t);
@@ -37,19 +37,17 @@ function parseTarget(t: string): { file: string; start: number; end: number } {
   return { file: m[1], start, end };
 }
 
-export interface Resolved { reason: Reason; res: Resolution }
-
-export function resolveFile(root: string, repoFile: string): Resolved[] {
-  const abs = join(root, repoFile);
-  const lines = existsSync(abs) ? readLines(abs) : [];
-  return loadReasons(root, repoFile).map((reason) => ({ reason, res: resolveAnchor(lines, reason.anchor) }));
+function fmt({ reason, res, file, movedFrom }: Resolved): string {
+  const where = res.startLine ? (res.startLine === res.endLine ? `L${res.startLine}` : `L${res.startLine}-${res.endLine}`) : "?";
+  const status = movedFrom ? `relocated from ${movedFrom}` : res.status === "exact" ? "" : `${res.status}${res.status === "fuzzy" ? ` ${Math.round(res.score * 100)}%` : ""}`;
+  const tag = status ? ` [${status}]` : "";
+  const meta = [reason.commit, reason.author, reason.source].filter(Boolean).join(" | ");
+  const link = reason.link ? `\n    ${reason.link}` : "";
+  return `${file}:${where}${tag}  (${reason.id})\n    ${reason.note}${link}\n    -- ${meta}, ${reason.createdAt.slice(0, 10)}`;
 }
 
-function fmt({ reason, res }: Resolved): string {
-  const where = res.startLine ? (res.startLine === res.endLine ? `L${res.startLine}` : `L${res.startLine}-${res.endLine}`) : "?";
-  const tag = res.status === "exact" ? "" : ` [${res.status}${res.status === "fuzzy" ? ` ${Math.round(res.score * 100)}%` : ""}]`;
-  const meta = [reason.commit, reason.author, reason.source].filter(Boolean).join(" | ");
-  return `${reason.file}:${where}${tag}  (${reason.id})\n    ${reason.note}\n    -- ${meta}, ${reason.createdAt.slice(0, 10)}`;
+function toJson(items: Resolved[]) {
+  return JSON.stringify(items.map(({ reason, res, file, movedFrom }) => ({ ...reason, anchor: undefined, file, recordedFile: reason.file, resolved: res, movedFrom })), null, 2);
 }
 
 const claudeMdNote = () => `
@@ -62,14 +60,13 @@ authoritative: do not simplify or remove an annotated line without addressing th
 When you discover a non-obvious reason (a fix after a failing test, a revert, a "so that's why"), record it in one line:
 
     ${cliCmd()} add <file>:<start>-<end> "why" --source claude-code
-`;
 
-/** How to invoke this CLI from a shell in any repo: the bare name if linked, else node + absolute path. */
-export function cliCmd(): string {
-  if (process.env.REASONS_CLI) return process.env.REASONS_CLI;
-  const self = fileURLToPath(import.meta.url).replace(/\\/g, "/");
-  return `node "${self}"`;
-}
+A good reason names the constraint and what breaks without it, not what the code does:
+  good: "3 not 5: 5 retries tripped the upstream rate limit in prod (#412)"
+  good: "must run before loadConfig(); it reads the env var this sets"
+  bad:  "retry loop"   bad: "fixed the bug"   bad: anything the code already says
+Anchor the line someone would be tempted to change, not the whole function.
+`;
 
 /** Install hooks + CLAUDE.md note into the repo at `root`. Idempotent. */
 function init(root: string) {
@@ -81,25 +78,31 @@ function init(root: string) {
   const want: Record<string, string | undefined> = { PreToolUse: "Edit|MultiEdit|Write", PostToolUse: "Read|Edit|MultiEdit|Write|Bash", Stop: undefined };
   for (const [event, matcher] of Object.entries(want)) {
     const list: Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }> = (settings.hooks[event] ??= []);
-    const ours = list.find((h) => h.hooks?.some((x) => /cli\.js" hook|reasons hook/.test(x.command)));
+    const ours = list.find((h) => h.hooks?.some((x) => /cli\.js" hook|\breasons hook\b/.test(x.command)));
     const entry = { ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: cmd }] };
-    if (ours) Object.assign(ours, entry);
-    else list.push(entry);
+    if (ours) Object.assign(ours, entry); else list.push(entry);
   }
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   const md = join(root, "CLAUDE.md");
   const existing = existsSync(md) ? readFileSync(md, "utf8") : "";
   if (!/## reasons/.test(existing)) appendFileSync(md, (existing && !existing.endsWith("\n") ? "\n" : "") + claudeMdNote());
   mkdirSync(join(root, ".reasons"), { recursive: true });
-  console.log(`installed hooks in ${toRepoPath(root, settingsPath)} and a note in CLAUDE.md`);
+  console.log(`installed hooks (${cmd}) in ${toRepoPath(root, settingsPath)} and a note in CLAUDE.md`);
 }
 
-function main(argv: string[]) {
+function takeOpt(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  if (i < 0) return;
+  const [, v] = args.splice(i, 2);
+  return v;
+}
+
+async function main(argv: string[]) {
   const args = argv.slice();
-  let source = "cli";
-  const si = args.indexOf("--source");
-  if (si >= 0) { source = args[si + 1] ?? "cli"; args.splice(si, 2); }
-  const [cmd, ...rest] = args;
+  let source = takeOpt(args, "--source") ?? "cli";
+  let link = takeOpt(args, "--link");
+  const json = args.includes("--json");
+  const [cmd, ...rest] = args.filter((a) => a !== "--json");
   const root = repoRoot();
 
   switch (cmd) {
@@ -109,6 +112,7 @@ function main(argv: string[]) {
         const j = JSON.parse(readFileSync(0, "utf8"));
         file = String(j.file); start = Number(j.start); end = Number(j.end ?? j.start); note = String(j.note ?? "").trim();
         if (j.source) source = String(j.source);
+        if (j.link) link = String(j.link);
         if (!file || !start || !note) throw new Error("--json needs file, start, note");
       } else {
         const [target, ...noteParts] = rest;
@@ -117,52 +121,79 @@ function main(argv: string[]) {
         ({ file, start, end } = parseTarget(target));
       }
       const lines = readLines(file);
-      if (end > lines.length) throw new Error(`${file} has only ${lines.length} lines`);
+      const count = lines.length - (lines.at(-1) === "" ? 1 : 0); // trailing newline is not a line
+      if (end > count) throw new Error(`${file} has only ${count} lines`);
       const anchor = makeAnchor(lines, start, end);
       if (!anchor.lines.some((l) => normalize(l))) throw new Error("refusing to anchor blank lines; pick a line with content");
-      const r = newReason(root, toRepoPath(root, file), note, anchor, source);
+      const repoFile = toRepoPath(root, file);
+      const dup = resolveFile(root, repoFile).find((x) =>
+        x.res.status !== "stale" && x.res.startLine! <= end && x.res.endLine! >= start && normalize(x.reason.note) === normalize(note));
+      if (dup) { console.log(`already recorded as ${dup.reason.id}; nothing added`); return; }
+      const r = newReason(root, repoFile, note, anchor, source);
+      if (link) r.link = link;
       const path = saveReason(root, r);
       console.log(`recorded ${r.id} -> ${toRepoPath(root, path)}`);
       return;
     }
-    case "show": {
-      const [file] = rest;
-      if (!file) throw new Error(USAGE);
-      const items = resolveFile(root, toRepoPath(root, file));
-      if (rest.includes("--json")) { console.log(JSON.stringify(items.map(({ reason, res }) => ({ ...reason, anchor: undefined, resolved: res })), null, 2)); return; }
-      if (!items.length) { console.log("no reasons recorded for this file"); return; }
+    case "show":
+    case "why": {
+      const [target] = rest;
+      if (!target) throw new Error(USAGE);
+      const m = /^(.+?):(\d+)$/.exec(target);
+      const file = m ? m[1] : target, line = m ? Number(m[2]) : undefined;
+      let items = resolveFile(root, toRepoPath(root, file));
+      if (line) items = items.filter((x) => x.res.status !== "stale" && x.res.startLine! <= line && x.res.endLine! >= line);
+      if (json) { console.log(toJson(items)); return; }
+      if (!items.length) { console.log(line ? `no reasons cover ${file}:${line}` : "no reasons recorded for this file"); return; }
       for (const it of items) console.log(fmt(it) + "\n");
-      return;
-    }
-    case "doctor": {
-      // moved: fine, code shifted; re-pin with --fix.  fuzzy: the line changed; re-pin or re-read the note.
-      // stale: gone; the note is hidden from agents until someone deletes or re-anchors it.
-      const fix = rest.includes("--fix");
-      const files = [...new Set(loadReasons(root).map((r) => r.file))];
-      let moved = 0, fuzzy = 0, stale = 0, fixed = 0;
-      for (const f of files) for (const it of resolveFile(root, f)) {
-        const { status, startLine, endLine } = it.res;
-        if (status === "exact") continue;
-        if (status === "moved") moved++; else if (status === "fuzzy") fuzzy++; else stale++;
-        console.log(fmt(it) + "\n");
-        if (fix && status !== "stale" && startLine && endLine) {
-          const abs = join(root, f);
-          it.reason.anchor = makeAnchor(readLines(abs), startLine, endLine);
-          saveReason(root, it.reason); fixed++;
-        }
-      }
-      const parts = [moved && `${moved} moved`, fuzzy && `${fuzzy} fuzzy`, stale && `${stale} stale`].filter(Boolean);
-      if (!parts.length) console.log("all reasons anchored exactly");
-      else console.log(parts.join(", ") + (fix ? `; re-pinned ${fixed}` : moved + fuzzy ? "; run doctor --fix to re-pin the moved/fuzzy ones" : ""));
-      process.exitCode = fuzzy + stale ? 1 : 0;
       return;
     }
     case "list": {
       const files = [...new Set(loadReasons(root).map((r) => r.file))].sort();
       const all = files.flatMap((f) => resolveFile(root, f));
-      if (rest.includes("--json")) { console.log(JSON.stringify(all.map(({ reason, res }) => ({ ...reason, anchor: undefined, resolved: res })), null, 2)); return; }
+      if (json) { console.log(toJson(all)); return; }
       if (!all.length) { console.log("no reasons recorded"); return; }
       for (const it of all) console.log(fmt(it) + "\n");
+      return;
+    }
+    case "doctor": {
+      // moved: fine, code shifted; re-pin with --fix.  fuzzy: the line changed; re-pin or re-read the note.
+      // orphan: the file is gone; --fix follows it if it can be found.  stale: gone; hidden from agents; --prune deletes.
+      const fix = rest.includes("--fix"), prune = rest.includes("--prune");
+      const files = [...new Set(loadReasons(root).map((r) => r.file))];
+      const n = { moved: 0, fuzzy: 0, stale: 0, orphan: 0, fixed: 0, pruned: 0 };
+      for (const f of files) {
+        const fileGone = !existsSync(join(root, f));
+        for (const it of resolveFile(root, f)) {
+          const { reason, res } = it;
+          if (res.status === "exact") continue;
+          let target: { file: string; res: typeof res } | undefined;
+          if (fileGone) {
+            target = relocate(root, reason);
+            if (target) { n.orphan++; console.log(fmt({ reason, res: target.res, file: target.file, movedFrom: f }) + "\n"); }
+            else { n.stale++; console.log(fmt(it) + "\n"); }
+          } else {
+            if (res.status === "moved") n.moved++; else if (res.status === "fuzzy") n.fuzzy++; else n.stale++;
+            console.log(fmt(it) + "\n");
+            if (res.status !== "stale") target = { file: f, res };
+          }
+          if (fix && target?.res.startLine && target.res.endLine) {
+            reason.file = target.file;
+            reason.anchor = makeAnchor(readLines(join(root, target.file)), target.res.startLine, target.res.endLine);
+            saveReason(root, reason); n.fixed++;
+          } else if (prune && !target) {
+            deleteReason(root, reason.id); n.pruned++;
+          }
+        }
+      }
+      const parts = [n.moved && `${n.moved} moved`, n.fuzzy && `${n.fuzzy} fuzzy`, n.orphan && `${n.orphan} relocated`, n.stale && `${n.stale} stale`].filter(Boolean);
+      if (!parts.length) console.log("all reasons anchored exactly");
+      else {
+        const did = [fix && `re-pinned ${n.fixed}`, prune && `pruned ${n.pruned}`].filter(Boolean).join(", ");
+        const hint = !fix && n.moved + n.fuzzy + n.orphan ? "run doctor --fix to re-pin" : !prune && n.stale ? "doctor --prune deletes stale ones" : "";
+        console.log(parts.join(", ") + (did ? `; ${did}` : hint ? `; ${hint}` : ""));
+      }
+      process.exitCode = n.fuzzy + n.stale - (prune ? n.pruned : 0) ? 1 : 0;
       return;
     }
     case "rm": {
@@ -175,6 +206,10 @@ function main(argv: string[]) {
       return runHook(root);
     case "init":
       return init(root);
+    case "mcp": {
+      const { serveMcp } = await import("./mcp.js");
+      return serveMcp(root);
+    }
     case "eval": {
       const opt = (name: string, dflt: string) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : dflt; };
       const opts = {
@@ -190,5 +225,4 @@ function main(argv: string[]) {
   }
 }
 
-try { main(process.argv.slice(2)); }
-catch (e) { console.error((e as Error).message); process.exitCode = 1; }
+main(process.argv.slice(2)).catch((e) => { console.error((e as Error).message); process.exitCode = 1; });

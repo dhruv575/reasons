@@ -8,11 +8,12 @@ export interface Resolution {
   startLine?: number;   // 1-based
   endLine?: number;
   score: number;        // 0..1 similarity of matched region to anchor
+  context: number;      // 0..1 how well the neighbours at the match agree with the recorded context
 }
 
 const FUZZY_THRESHOLD = 0.6;
 /** A "moved" exact match must keep some of its neighbours, or it's a coincidental copy elsewhere. */
-const MOVED_CTX_FLOOR = 0.2;
+export const MOVED_CTX_FLOOR = 0.2;
 /** Trivial anchors (`}`, `});`, `return;`) recur everywhere, so they need a stronger neighbourhood. */
 const TRIVIAL_CHARS = 16;
 const TRIVIAL_CTX_FLOOR = 0.34;
@@ -67,7 +68,7 @@ class Matcher {
 
 export function resolveAnchor(fileLines: string[], anchor: Anchor): Resolution {
   const n = anchor.lines.length;
-  if (n === 0 || fileLines.length === 0) return { status: "stale", score: 0 };
+  if (n === 0 || fileLines.length === 0) return { status: "stale", score: 0, context: 0 };
   const m = new Matcher(fileLines, anchor);
   const hint = anchor.startLine - 1;
   const trivial = anchor.lines.map(normalize).join("").length < TRIVIAL_CHARS;
@@ -82,8 +83,8 @@ export function resolveAnchor(fileLines: string[], anchor: Anchor): Resolution {
     if (c > bestCtx + 1e-9 || (Math.abs(c - bestCtx) < 1e-9 && Math.abs(at - hint) < Math.abs(best - hint))) { best = at; bestCtx = c; }
   }
   if (best >= 0) {
-    if (best === hint) return { status: "exact", startLine: hint + 1, endLine: hint + n, score: 1 };
-    if (bestCtx >= (trivial ? TRIVIAL_CTX_FLOOR : MOVED_CTX_FLOOR)) return { status: "moved", startLine: best + 1, endLine: best + n, score: 1 };
+    if (best === hint) return { status: "exact", startLine: hint + 1, endLine: hint + n, score: 1, context: bestCtx };
+    if (bestCtx >= (trivial ? TRIVIAL_CTX_FLOOR : MOVED_CTX_FLOOR)) return { status: "moved", startLine: best + 1, endLine: best + n, score: 1, context: bestCtx };
     // Identical text in unfamiliar surroundings is a coincidence, not a match. Fall through to fuzzy,
     // which may still find the edited original near its old neighbours.
   }
@@ -95,7 +96,7 @@ export function resolveAnchor(fileLines: string[], anchor: Anchor): Resolution {
     if (sc > bestScore || (sc === bestScore && Math.abs(at - hint) < Math.abs(bestAt - hint))) { bestScore = sc; bestAt = at; }
   }
   if (bestScore >= FUZZY_THRESHOLD) {
-    return { status: "fuzzy", startLine: bestAt + 1, endLine: bestAt + n, score: bestScore };
+    return { status: "fuzzy", startLine: bestAt + 1, endLine: bestAt + n, score: bestScore, context: m.ctx(bestAt) };
   }
-  return { status: "stale", score: bestScore };
+  return { status: "stale", score: bestScore, context: 0 };
 }
