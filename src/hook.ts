@@ -44,11 +44,16 @@ interface Session {
 // Only match at a shell command boundary (start, or after ; && || | newline), allowing env-var
 // prefixes and wrappers, so a command that merely *mentions* "git checkout --" inside a string
 // or a comment does not fire.
-const AT_CMD = String.raw`(?:^|[;&|]\s*|\n\s*)(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:\w+=\S*\s+)*(?:sudo\s+|env\s+|time\s+|timeout\s+\S+\s+)?`;
-const TEST_CMD = new RegExp(AT_CMD + String.raw`(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|t)\b|(?:npx\s+|pnpm\s+|yarn\s+|bunx\s+)?(?:jest|vitest|mocha|ava|tap|pytest|py\.test|rspec|phpunit)\b|(?:\.\/)?node_modules\/\.bin\/(?:jest|vitest|mocha|ava)\b|python3?\s+-m\s+pytest\b|cargo\s+test\b|go\s+test\b|dotnet\s+test\b|mvn\s+test\b|gradle\s+test\b|make\s+test\b|(?:npx\s+)?tsx\s+--test\b|node\s+(?:--[\w-]+(?:\s+\S+)?\s+)*(?:--test\b|\S+\s+--test\b))`);
-const REVERT_CMD = new RegExp(AT_CMD + String.raw`git\s+(?:-C\s+\S+\s+)?(?:revert\b|restore\b(?!\s+--staged)|checkout\s+(?:--|\.(?=\s|$)|HEAD\S*|[0-9a-f]{7,40}\s+--)|reset\s+--hard\b|stash\s+pop\b)`);
-// Test runners summarise failures with a count or a fixed token. Bare "failed" is avoided: it appears in passing test names.
-const FAIL_SIGNS = /\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b|\bfail(?:ed|ures?)?:?\s+[1-9]|\bFAIL\b|\bFAILED\b|\bnot ok\b|\bTraceback\b|\bpanicked\b|\bAssertionError\b|✖|✗|\bERR_ASSERTION\b|npm ERR! Test failed/;
+const AT_CMD = String.raw`(?:^|[;&|]\s*|\n\s*)(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:\w+=\S*\s+)*(?:sudo\s+|env\s+|time\s+|timeout\s+\S+\s+|(?:uv|poetry|pipenv)\s+run\s+|npx\s+cross-env\s+(?:\w+=\S*\s+)+)?`;
+const TEST_CMD = new RegExp(AT_CMD + String.raw`(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|t)\b|(?:npx\s+|pnpm\s+|yarn\s+|bunx\s+)?(?:jest|vitest|mocha|ava|tap|pytest|py\.test|rspec|phpunit)\b|(?:\.\/)?(?:node_modules\/\.bin|\.venv\/bin|venv\/bin)\/(?:jest|vitest|mocha|ava|pytest)\b|python3?\s+-m\s+pytest\b|cargo\s+(?:test|nextest\s+run)\b|go\s+test\b|deno\s+test\b|dotnet\s+test\b|mvn\s+test\b|gradle\s+test\b|make\s+test\b|(?:npx\s+)?tsx\s+--test(?=\s|$)|node\s+(?:--[\w-]+(?:=\S+|\s+\S+)?\s+)*(?:--test(?=\s|$)|\S+\s+--test(?=\s|$)))`);
+const REVERT_CMD = new RegExp(AT_CMD + String.raw`git\s+(?:-C\s+\S+\s+)?(?:revert\b|restore\b(?!\s+--staged\b(?![^\n;&|]*(?:--worktree|-W)\b))|checkout\s+(?:--|\.(?=\s|$)|\.\/|\S+\/(?=\s|$)|HEAD\S*\s+--|[0-9a-f]{7,40}\s+--|\S+\s+--\s)|reset\s+--hard\b|stash\s+pop\b)`);
+// Test runners summarise failures with a count or a fixed token, judged per line; lines that are a
+// passing test's own report (✔ retries 2 failed requests) are skipped, or red becomes sticky.
+const FAIL_SIGNS = /\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b|\bfail(?:ed|ures?)?:?\s+[1-9]|\bFAIL\b|\bFAILED\b|\bnot ok\b|\bTraceback\b|\bpanicked\b|\bAssertionError\b|^\s*[✖✗]|\bERR_ASSERTION\b|npm ERR! Test failed/;
+const PASS_LINE = /^\s*(?:[✔✓√]|ok\b|PASS\b|--- PASS|\d+ problems?\b)/;
+export function looksFailed(output: string): boolean {
+  return output.split("\n").slice(-40).some((l) => !PASS_LINE.test(l) && !/[✖✗].*\d+ problems?/.test(l) && FAIL_SIGNS.test(l));
+}
 const MAX_NUDGES: Record<Kind, number> = { green: 3, revert: 2, undo: 2 };
 const MAX_SHOWN = 12;            // per Read; more than this is noise, the agent can ask for the rest
 const RED_TTL_MS = 60 * 60_000;  // a red run older than this is a different piece of work
@@ -223,8 +228,8 @@ function responseText(resp: unknown): string {
 export function stripQuotes(raw: string): string {
   return raw
     .replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2(?=\s|$)/g, "<<HEREDOC")
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-    .replace(/(^|[^\w])'[^']*'/g, '$1""')
+    // One left-to-right pass over both quote kinds, so a `"` inside '...' cannot pair with a later one.
+    .replace(/"(?:[^"\\]|\\.)*"|(^|[^\w])'[^']*'/g, (_m, pre) => (pre ?? "") + '""')
     .replace(/(^|\s)#[^\n]*/g, "$1");
 }
 
@@ -241,16 +246,15 @@ function onBash(root: string, ti: Record<string, unknown>, resp: unknown, id: st
         `You just reverted or restored code (\`${raw.slice(0, 80)}\`). Reverts are where reasons get lost: ` +
         `if the approach you backed out is one a future reader (or you, next session) might retry, record why it didn't work ` +
         `on the line that would tempt them: \`${cliCmd()} add <file> --match "<text on the line>" "tried X; failed because Y" --source claude-code\`. Skip if it was a typo.`);
+      return; // one prompt per hook run; `git checkout -- f && npm test` still updates test state next time
     }
-    return;
   }
 
   if (!TEST_CMD.test(cmd)) return;
   // Claude Code's Bash response carries no exit code, so the summary lines at the end of the output decide.
   const r = obj(resp);
   const exit = typeof r.exit_code === "number" ? r.exit_code : typeof r.exitCode === "number" ? r.exitCode : undefined;
-  const tail = responseText(resp).split("\n").slice(-40).join("\n");
-  const failed = exit !== undefined ? exit !== 0 : FAIL_SIGNS.test(tail);
+  const failed = exit !== undefined ? exit !== 0 : looksFailed(responseText(resp));
 
   if (failed) {
     if (s.testFailedAt === undefined) { s.testFailedAt = Date.now(); s.editsSinceFail = []; s.idsAtFail = loadReasons(root).map((x) => x.id); }
@@ -302,7 +306,7 @@ function onStop(root: string, id: string | undefined, active: boolean) {
 }
 
 /** Exposed for tests. */
-export const patterns = { TEST_CMD, REVERT_CMD, FAIL_SIGNS, stripQuotes };
+export const patterns = { TEST_CMD, REVERT_CMD, FAIL_SIGNS, stripQuotes, looksFailed };
 
 export function runHook(root: string): void {
   try {

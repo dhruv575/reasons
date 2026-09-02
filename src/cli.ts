@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import {
   repoRoot, toRepoPath, makeAnchor, normalize, newReason, saveReason, deleteReason, loadReasons,
 } from "./store.js";
@@ -70,7 +70,7 @@ function fmt({ reason, res, file, movedFrom }: Resolved): string {
   const tag = status ? ` [${status}]` : "";
   const meta = [reason.commit, reason.author, reason.source].filter(Boolean).join(" | ");
   const link = reason.link ? `\n    ${reason.link}` : "";
-  return `${file}:${where}${tag}  (${reason.id})\n    ${reason.note}${link}\n    -- ${meta}, ${reason.createdAt.slice(0, 10)}`;
+  return `${file}:${where}${tag}  (${reason.id})\n    ${reason.note}${link}\n    -- ${meta}, ${reason.createdAt?.slice(0, 10) ?? "?"}`;
 }
 
 function toJson(items: Resolved[]) {
@@ -106,14 +106,22 @@ function init(root: string) {
   settings.hooks ??= {};
   // Only ever touch our own hook command. A user's other hooks in the same group, and a matcher they
   // trimmed on purpose (e.g. dropping Bash), are left exactly as they are.
-  const OURS = /^(?:reasons|npx\s+reasons|node\s+"?[^"]*[\\/]reasons[\\/]dist[\\/]cli\.js"?)\s+hook$/;
+  const isOurs = (c: string): boolean => {
+    c = c.trim();
+    if (c === cmd || /^(?:npx\s+)?reasons\s+hook$/.test(c) || /[\\/]reasons[\\/]dist[\\/]cli\.js"?\s+hook$/.test(c)) return true;
+    // `node "<anywhere>/dist/cli.js" hook`: ours if that file is this tool (the checkout may be named anything).
+    const m = /^node\s+"?(.+?[\\/]dist[\\/]cli\.js)"?\s+hook$/.exec(c);
+    if (!m) return false;
+    const p = isAbsolute(m[1]) ? m[1] : join(root, m[1]);
+    try { return readFileSync(p, "utf8").includes("pin the *why*"); } catch { return false; }
+  };
   const want: Record<string, string | undefined> = { PreToolUse: "Edit|MultiEdit|Write", PostToolUse: "Read|Edit|MultiEdit|Write|Bash", Stop: undefined };
   for (const [event, matcher] of Object.entries(want)) {
     if (!Array.isArray(settings.hooks[event])) settings.hooks[event] = [];
     const list: Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string }> }> = settings.hooks[event];
     let found = false;
     for (const group of list) for (const hk of group.hooks ?? []) {
-      if (typeof hk.command === "string" && OURS.test(hk.command.trim())) { hk.type = "command"; hk.command = cmd; found = true; }
+      if (typeof hk.command === "string" && isOurs(hk.command)) { hk.type = "command"; hk.command = cmd; found = true; }
     }
     if (!found) list.push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: cmd }] });
   }
