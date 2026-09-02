@@ -1,6 +1,9 @@
 {
   "name": "reasons",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20.11" },
+  "keywords": ["annotations", "code-comments", "claude-code", "hooks", "mcp", "why"],
   "description": "Git-native annotations that pin the *why* to the code it explains, and surface it to humans and agents when they touch that code.",
   "type": "module",
   "bin": { "reasons": "./dist/cli.js" },

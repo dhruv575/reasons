@@ -11,7 +11,9 @@ npm install && npm run build && npm link     # puts `reasons` on PATH
 cd ~/some/repo && reasons init               # installs hooks + a CLAUDE.md note
 
 reasons add src/retry.ts:14 "3 not 5: 5 tripped the upstream rate limit in prod" --link https://github.com/o/r/issues/412
+reasons add src/retry.ts#retry "..."         # anchor to the line that declares `retry`
 reasons show src/retry.ts                    # live reasons for a file (--json for machines)
+reasons diff origin/main                     # reasons touched by a diff; --check exits 1 for CI
 reasons why src/retry.ts:14                  # just the ones covering a line
 reasons list                                 # every reason in the repo
 reasons doctor                               # moved / fuzzy / relocated / stale; exit 1 if fuzzy or stale
@@ -48,6 +50,7 @@ Telling an agent "remember to run the CLI" does not work. Agents forget the way 
 | before `Edit` / `Write` | if the edit overlaps an annotated region, the note is shown first, with the id to remove it if it no longer applies |
 | after `Bash` runs tests | if tests went red, then you edited, then they went green, a one-line prompt asks for the why. Skippable, capped at three per session |
 | after `Bash` reverts | `git revert`, `git restore`, `git checkout --`, `git reset --hard` trigger a prompt to record why the backed-out approach failed |
+| after an `Edit` that undoes an earlier edit | agents rarely run `git revert`; they edit the old text back. That is detected and prompts the same way |
 | on `Stop` | if a red-to-green fix went unrecorded, one final question before the session ends. Asked once, never repeated |
 
 Both `Bash` patterns match only at a shell command boundary and ignore quoted strings, so a command that merely mentions `git checkout --` does not fire.
@@ -62,7 +65,7 @@ Each reason stores the anchored lines plus three lines of context on either side
 | --- | --- |
 | exact | still at the original line |
 | moved | same text, different line, and its neighbours came with it |
-| fuzzy | text edited but still recognisable (similarity above 0.6) |
+| fuzzy | text edited but still recognisable: similarity above 0.6, or above 0.5 when the surrounding lines still match |
 | relocated | the recorded file is gone, but text and neighbours match in another file. `doctor --fix` follows it |
 | stale | no longer found; hidden from agents, reported by `doctor` |
 
@@ -76,18 +79,18 @@ Planting anchors one commit before HEAD-n and resolving one commit later, over t
 
 | | commander.js | execa |
 | --- | --- | --- |
-| unchanged line found | 98.9% | 99.7% |
-| edited line tracked | 62% | 79% |
-| deleted line correctly expired | 97% | 89% |
-| misleading (wrong line or ghost) | 0.9% | 0.6% |
+| unchanged line found | 99.0% | 99.6% |
+| edited line tracked | 85% | 92% |
+| deleted line correctly expired | 96% | 79% |
+| misleading (wrong line or ghost) | 0.8% | 0.8% |
 
-Twenty commits apart on commander the misleading rate is 2.0%, nearly all of it inside the lockfile, which the evaluator now skips.
+(Last 60 commits of each, 5 anchors per changed file. The execa deleted-line sample is small, 38 lines.) Twenty commits apart on commander the misleading rate is about 2%, nearly all of it inside the lockfile, which the evaluator now skips.
 
 The evaluator found four resolver and evaluator bugs in its first hour. They are recorded in this repo's own `.reasons/`, on the lines they explain, which is the point.
 
 ## Tests
 
-`npm test` runs resolver unit tests, hook pattern tests, evaluator line-mapping tests, and an end-to-end suite that drives the built CLI through add, move, rename, hooks, red-to-green capture, Stop, prune, init, and MCP in a throwaway git repo.
+`npm test` runs resolver unit tests, hook pattern tests, evaluator line-mapping tests, and an end-to-end suite that drives the built CLI through add, symbol targets, move, rename, hooks, red-to-green capture, undo detection, diff, Stop, prune, init, and MCP in a throwaway git repo.
 
 ## Not yet built
 

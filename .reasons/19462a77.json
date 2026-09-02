@@ -1,0 +1,26 @@
+{
+  "id": "19462a77",
+  "file": "src/resolve.ts",
+  "note": "eval: rescuing a weak core match with strong context lifted edited-line tracking from 62% to 85% (commander) and 79% to 92% (execa). WEAK_CORE 0.4 pushed ghosts from 3% to 13%; 0.5 brings them back to 4%",
+  "anchor": {
+    "lines": [
+      "const STRONG_CTX = 0.8, WEAK_CORE = 0.5;"
+    ],
+    "before": [
+      "}",
+      "",
+      "const FUZZY_THRESHOLD = 0.6;"
+    ],
+    "after": [
+      "/** A \"moved\" exact match must keep some of its neighbours, or it's a coincidental copy elsewhere. */",
+      "export const MOVED_CTX_FLOOR = 0.2;",
+      "/** Trivial anchors (`}`, `});`, `return;`) recur everywhere, so they need a stronger neighbourhood. */"
+    ],
+    "startLine": 15,
+    "hash": "5f14fbb7b150"
+  },
+  "createdAt": "2026-09-02T02:24:19.706Z",
+  "commit": "9e74e62",
+  "author": "Dhruv Gupta",
+  "source": "claude-code"
+}

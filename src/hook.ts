@@ -12,6 +12,7 @@
  * get in the agent's way.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { toRepoPath, loadReasons } from "./store.js";
@@ -32,6 +33,7 @@ interface Session {
   reasonsAtFail?: number;           // how many reasons existed when tests went red
   nudged: number;                   // how many red->green prompts we've issued
   unrecordedFix?: string[];         // edits from the last red->green that went unrecorded
+  recentEdits?: Array<{ file: string; oldH: string; newH: string }>; // for undo detection
   stopAsked?: boolean;              // the one end-of-session question has been asked
 }
 
@@ -42,6 +44,7 @@ const TEST_CMD = new RegExp(AT_CMD + String.raw`(?:(?:npm|pnpm|yarn|bun)\s+(?:ru
 const REVERT_CMD = new RegExp(AT_CMD + String.raw`git\s+(?:revert|restore|checkout\s+(?:--|HEAD)|reset\s+--hard|stash\s+pop)(?=\s|$)`);
 const FAIL_SIGNS = /\b(FAIL|failed|failing|not ok|AssertionError|Error:|✖|✗|Traceback|panicked|FAILED)\b|\bfail\s+[1-9]/;
 const MAX_NUDGES = 3;
+const MAX_SHOWN = 12; // per Read; more than this is noise, the agent can ask for the rest
 
 function sessionPath(id: string) {
   const dir = join(tmpdir(), "reasons-sessions");
@@ -83,16 +86,21 @@ function onRead(root: string, input: HookInput) {
   const offset = Number(input.tool_input?.offset ?? 0) || 0, limit = Number(input.tool_input?.limit ?? 0) || 0;
   const lo = offset > 0 ? offset : 1, hi = limit > 0 ? lo + limit - 1 : Infinity;
   const inWindow = found.live.filter((r) => r.res.startLine! <= hi && r.res.endLine! >= lo);
-  const outside = found.live.length - inWindow.length;
-  if (!inWindow.length && !outside) return;
-  const body = inWindow.map((r) => {
+  const shown = inWindow.slice(0, MAX_SHOWN);
+  const outside = found.live.length - shown.length;
+  const showCmd = `\`${cliCmd()} show ${found.repoFile}\``;
+  if (!shown.length) {
+    emit("PostToolUse", `${found.repoFile} has ${outside} recorded reason(s) outside the lines you read; ${showCmd} lists them.`);
+    return;
+  }
+  const body = shown.map((r) => {
     const conf = r.res.status === "fuzzy" ? " (approximate location)" : "";
     const link = r.reason.link ? ` (${r.reason.link})` : "";
     return `- ${where(r)}${conf}: ${r.reason.note}${link}  [id ${r.reason.id}]`;
   }).join("\n");
-  const more = outside ? `\n(${outside} more outside the lines you read; \`${cliCmd()} show ${found.repoFile}\` lists all)` : "";
+  const more = outside ? `\n(${outside} more not shown; ${showCmd} lists all)` : "";
   emit("PostToolUse",
-    `Recorded reasons for ${found.repoFile} (from .reasons/, authoritative; do not "clean up" these lines without addressing the note):\n${body || "(none in this window)"}${more}`);
+    `Recorded reasons for ${found.repoFile} (from .reasons/, authoritative; do not "clean up" these lines without addressing the note):\n${body}${more}`);
 }
 
 /** 1-based line range that `needle` occupies in `haystack`, or undefined. */
@@ -128,26 +136,50 @@ function onPreEdit(root: string, input: HookInput) {
     `If the reason changes, re-record it with \`${cliCmd()} add\`.`);
 }
 
+const h = (s: string) => createHash("sha1").update(s.replace(/\s+/g, " ").trim()).digest("hex").slice(0, 16);
+
 function onPostEdit(root: string, input: HookInput) {
   const id = input.session_id; const filePath = input.tool_input?.file_path as string | undefined;
   if (!id || !filePath) return;
-  const s = loadSession(id);
-  if (s.testFailedAt === undefined) return; // only care about edits made while red
   const repoFile = toRepoPath(root, filePath);
   if (repoFile.startsWith("..")) return;
-  let range = "";
-  try {
-    const text = readFileSync(filePath, "utf8");
-    const ti = input.tool_input ?? {};
-    const news: string[] = [];
-    if (typeof ti.new_string === "string") news.push(ti.new_string);
-    if (Array.isArray(ti.edits)) for (const e of ti.edits) if (typeof e?.new_string === "string") news.push(e.new_string);
-    const r = news.map((n) => rangeOf(text, n)).find(Boolean);
-    if (r) range = `:${r[0]}-${r[1]}`;
-  } catch { /* ignore */ }
-  const entry = `${repoFile}${range}`;
-  if (!s.editsSinceFail.includes(entry)) s.editsSinceFail.push(entry);
+  const s = loadSession(id);
+  const ti = input.tool_input ?? {};
+  const pairs: Array<{ o: string; n: string }> = [];
+  if (typeof ti.old_string === "string" && typeof ti.new_string === "string") pairs.push({ o: ti.old_string, n: ti.new_string });
+  if (Array.isArray(ti.edits)) for (const e of ti.edits) if (typeof e?.old_string === "string" && typeof e?.new_string === "string") pairs.push({ o: e.old_string, n: e.new_string });
+
+  // Undo detection: an edit whose new text equals the *old* text of an earlier edit in the same file
+  // is the agent backing out its own change. Agents almost never `git revert`; this is their revert.
+  s.recentEdits ??= [];
+  let undone: string | undefined;
+  for (const { o, n } of pairs) {
+    const oh = h(o), nh = h(n);
+    if (n.trim() && s.recentEdits.some((e) => e.file === repoFile && e.oldH === nh && e.newH !== nh)) undone = n;
+    s.recentEdits.push({ file: repoFile, oldH: oh, newH: nh });
+  }
+  s.recentEdits = s.recentEdits.slice(-40);
+
+  if (s.testFailedAt !== undefined) { // edits made while red are what the red->green prompt reports
+    let range = "";
+    try {
+      const text = readFileSync(filePath, "utf8");
+      const r = pairs.map((p) => rangeOf(text, p.n)).find(Boolean);
+      if (r) range = `:${r[0]}-${r[1]}`;
+    } catch { /* ignore */ }
+    const entry = `${repoFile}${range}`;
+    if (!s.editsSinceFail.includes(entry)) s.editsSinceFail.push(entry);
+  }
   saveSession(id, s);
+
+  if (undone && s.nudged < MAX_NUDGES) {
+    s.nudged++; saveSession(id, s);
+    const snippet = undone.trim().split("\n")[0].slice(0, 60);
+    emit("PostToolUse",
+      `You just restored earlier code in ${repoFile} (\`${snippet}\`), undoing your own change. ` +
+      `If the attempt failed for a reason the code doesn't show, pin it to the line so nobody retries it: ` +
+      `\`${cliCmd()} add ${repoFile}:<line> "tried X; failed because Y" --source claude-code\`. Skip if it was a typo.`);
+  }
 }
 
 function responseText(resp: unknown): string {

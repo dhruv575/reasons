@@ -7,12 +7,20 @@ import {
 import { resolveFile, relocate, readLines, type Resolved } from "./locate.js";
 import { cliCmd } from "./env.js";
 import { runHook } from "./hook.js";
-import { runEval, formatEval } from "./eval.js";
+import { runEval, formatEval, parseHunks } from "./eval.js";
+import { execFileSync } from "node:child_process";
+
+function gitOut(root: string, args: string[]): string {
+  try { return execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 }).toString(); }
+  catch { return ""; }
+}
 
 const USAGE = `reasons - pin the *why* to the code it explains
 
   reasons add <file>:<start>[-<end>] "<note>"   record a reason for a line range
+  reasons add <file>#<symbol> "<note>"          same, anchored to the line that declares <symbol>
   reasons add --json                             same, from stdin: {"file","start","end","note","source","link"}
+  reasons diff [<base>] [--check]                reasons touched by the diff vs HEAD (or <base>); --check exits 1 if any
   reasons show <file>[:<line>] [--json]          live reasons for a file, or just those covering a line
   reasons why <file>:<line>                      alias for show
   reasons list [--json]                          every reason in the repo
@@ -29,12 +37,30 @@ Options: --source <name>   who/what recorded it (default: cli)
          --link <url>      issue, PR, or doc that explains more
 `;
 
+/** `file:12`, `file:12-20`, or `file#name` (the line that declares `name`). */
 function parseTarget(t: string): { file: string; start: number; end: number } {
+  const sym = /^(.+?)#([\w$.]+)$/.exec(t);
+  if (sym) {
+    const line = findSymbolLine(readLines(sym[1]), sym[2]);
+    if (!line) throw new Error(`no declaration of ${sym[2]} found in ${sym[1]}`);
+    return { file: sym[1], start: line, end: line };
+  }
   const m = /^(.+?):(\d+)(?:-(\d+))?$/.exec(t);
-  if (!m) throw new Error(`expected <file>:<start>[-<end>], got "${t}"`);
+  if (!m) throw new Error(`expected <file>:<start>[-<end>] or <file>#<symbol>, got "${t}"`);
   const start = Number(m[2]), end = m[3] ? Number(m[3]) : start;
   if (end < start) throw new Error("end before start");
   return { file: m[1], start, end };
+}
+
+/** Line (1-based) that declares `name`: a declaration keyword before it, or `name(`/`name =`/`name:` as a fallback. */
+export function findSymbolLine(lines: string[], name: string): number | undefined {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const decl = new RegExp(String.raw`^\s*(?:export\s+|pub(?:\([^)]*\))?\s+|public\s+|private\s+|protected\s+|static\s+|async\s+|default\s+)*(?:function\*?|class|interface|type|enum|def|fn|func|struct|trait|impl|const|let|var|val|module|namespace)\s+${esc}\b`);
+  const loose = new RegExp(String.raw`^\s*(?:[\w<>\[\],\s]+\s)?${esc}\s*(?:\(|=|:|<)`);
+  const i = lines.findIndex((l) => decl.test(l));
+  if (i >= 0) return i + 1;
+  const j = lines.findIndex((l) => loose.test(l));
+  return j >= 0 ? j + 1 : undefined;
 }
 
 function fmt({ reason, res, file, movedFrom }: Resolved): string {
@@ -194,6 +220,30 @@ async function main(argv: string[]) {
         console.log(parts.join(", ") + (did ? `; ${did}` : hint ? `; ${hint}` : ""));
       }
       process.exitCode = n.fuzzy + n.stale - (prune ? n.pruned : 0) ? 1 : 0;
+      return;
+    }
+    case "diff": {
+      // Reasons whose anchored lines are touched by a diff: working tree vs HEAD by default, or vs a base ref.
+      // For review and CI: "this change touches 3 annotated lines" is the whole point of recording them.
+      const base = rest.find((a) => !a.startsWith("-")) ?? "HEAD";
+      const changed = gitOut(root, ["diff", "--name-only", base, "--"]).split("\n").filter(Boolean);
+      const hits: Array<Resolved & { hunk: string }> = [];
+      for (const f of changed) {
+        const hunks = parseHunks(gitOut(root, ["diff", "-U0", base, "--", f]));
+        for (const it of resolveFile(root, f)) {
+          if (it.res.status === "stale") continue;
+          const hunk = hunks.find((hk) => {
+            const lo = hk.newStart, hi = hk.newLen ? hk.newStart + hk.newLen - 1 : hk.newStart;
+            return it.res.startLine! <= hi && it.res.endLine! >= lo;
+          });
+          if (hunk) hits.push({ ...it, hunk: `-${hunk.oldStart},${hunk.oldLen} +${hunk.newStart},${hunk.newLen}` });
+        }
+      }
+      if (json) { console.log(toJson(hits)); return; }
+      if (!hits.length) { console.log(`no annotated lines touched (vs ${base})`); return; }
+      for (const it of hits) console.log(fmt(it) + "\n");
+      console.log(`${hits.length} annotated region(s) touched vs ${base}. Each note is either honoured, re-recorded, or removed with rm.`);
+      process.exitCode = rest.includes("--check") ? 1 : 0;
       return;
     }
     case "rm": {

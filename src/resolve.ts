@@ -12,6 +12,7 @@ export interface Resolution {
 }
 
 const FUZZY_THRESHOLD = 0.6;
+const STRONG_CTX = 0.8, WEAK_CORE = 0.5;
 /** A "moved" exact match must keep some of its neighbours, or it's a coincidental copy elsewhere. */
 export const MOVED_CTX_FLOOR = 0.2;
 /** Trivial anchors (`}`, `});`, `return;`) recur everywhere, so they need a stronger neighbourhood. */
@@ -95,8 +96,13 @@ export function resolveAnchor(fileLines: string[], anchor: Anchor): Resolution {
     const sc = m.region(at);
     if (sc > bestScore || (sc === bestScore && Math.abs(at - hint) < Math.abs(bestAt - hint))) { bestScore = sc; bestAt = at; }
   }
-  if (bestScore >= FUZZY_THRESHOLD) {
-    return { status: "fuzzy", startLine: bestAt + 1, endLine: bestAt + n, score: bestScore, context: m.ctx(bestAt) };
+  if (bestAt >= 0) {
+    const ctx = m.ctx(bestAt);
+    // A short line with a small edit (`=> 1` to `=> 2`) scores badly on tokens alone, but if all
+    // six neighbours still match it is the same line. Strong context lowers the bar for the core.
+    if (bestScore >= FUZZY_THRESHOLD || (ctx >= STRONG_CTX && m.core(bestAt) >= WEAK_CORE)) {
+      return { status: "fuzzy", startLine: bestAt + 1, endLine: bestAt + n, score: bestScore, context: ctx };
+    }
   }
   return { status: "stale", score: bestScore, context: 0 };
 }

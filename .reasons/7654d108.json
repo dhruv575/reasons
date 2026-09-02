@@ -7,8 +7,8 @@
       "export const MOVED_CTX_FLOOR = 0.2;"
     ],
     "before": [
-      "",
       "const FUZZY_THRESHOLD = 0.6;",
+      "const STRONG_CTX = 0.8, WEAK_CORE = 0.5;",
       "/** A \"moved\" exact match must keep some of its neighbours, or it's a coincidental copy elsewhere. */"
     ],
     "after": [
@@ -16,7 +16,7 @@
       "const TRIVIAL_CHARS = 16;",
       "const TRIVIAL_CTX_FLOOR = 0.34;"
     ],
-    "startLine": 16,
+    "startLine": 17,
     "hash": "043e49631fc0"
   },
   "createdAt": "2026-09-02T01:55:20.370Z",

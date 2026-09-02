@@ -45,7 +45,7 @@ test("Read hook pushes notes; windowed reads filter", () => {
   assert.match(ctx, /lines 1-6: whole function/);
   const win = hook({ hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: abs("src/retry.ts"), offset: 4, limit: 2 } });
   assert.match(win, /whole function/);
-  assert.match(win, /1 more outside/);
+  assert.match(win, /1 more not shown/);
   assert.equal(hook({ hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: abs("nope.ts") } }), "");
 });
 
@@ -90,6 +90,30 @@ test("stale: hidden from hooks, reported, pruned", () => {
   assert.equal(d.code, 1);
   assert.match(cli(["doctor", "--prune"]).out, /pruned 2/);
   assert.equal(readdirSync(join(repo, ".reasons")).length, 0);
+});
+
+test("symbol targets, diff, undo detection", () => {
+  writeFileSync(join(repo, "src/net/retry.ts"), "import x from 'x';\n\nexport async function retry(fn) {\n  const MAX = 3;\n  return fn();\n}\n\nconst helper = () => 1;\n");
+  git("add", "-A"); git("commit", "-qm", "restore");
+  assert.match(cli(["add", "src/net/retry.ts#retry", "sym note"]).out, /^recorded/);
+  assert.match(cli(["show", "src/net/retry.ts"]).out, /L3 .*\n\s+sym note/);
+  assert.match(cli(["add", "src/net/retry.ts#helper", "arrow note"]).out, /^recorded/);
+  assert.match(cli(["show", "src/net/retry.ts:8"]).out, /arrow note/);
+  assert.match(cli(["add", "src/net/retry.ts#nope", "x"]).out, /no declaration/);
+  // diff: touch the helper line only
+  assert.match(cli(["diff"]).out, /no annotated lines touched/);
+  writeFileSync(join(repo, "src/net/retry.ts"), "import x from 'x';\n\nexport async function retry(fn) {\n  const MAX = 3;\n  return fn();\n}\n\nconst helper = () => 2;\n");
+  const d = cli(["diff"]);
+  assert.match(d.out, /arrow note/);
+  assert.doesNotMatch(d.out, /sym note/);
+  assert.equal(cli(["diff", "--check"]).code, 1);
+  git("checkout", "--", "src/net/retry.ts");
+  // undo: edit A->B, then B->A in the same session
+  const sid = "undo-" + Date.now();
+  const edit = (o: string, n: string) => hook({ session_id: sid, hook_event_name: "PostToolUse", tool_name: "Edit", tool_input: { file_path: abs("src/net/retry.ts"), old_string: o, new_string: n } });
+  assert.equal(edit("const MAX = 3;", "const MAX = 5;"), "");
+  assert.match(edit("const MAX = 5;", "const MAX = 3;"), /undoing your own change/);
+  assert.equal(edit("return fn();", "return await fn();"), "");
 });
 
 test("init is idempotent and mcp answers", () => {
