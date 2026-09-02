@@ -1,5 +1,7 @@
 # reasons
 
+[![ci](https://github.com/dhruv575/reasons/actions/workflows/ci.yml/badge.svg)](https://github.com/dhruv575/reasons/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/git-reasons)](https://www.npmjs.com/package/git-reasons)
+
 Pin the *why* to the code it explains. Reasons live in `.reasons/` as plain JSON, travel with the repo, anchor to code by content rather than line number, follow files through moves and renames, and surface automatically when a human or an agent touches that code.
 
 Every repo has decisions that live only in someone's head: why the retry count is 3, why the migration was split, why the obvious refactor was reverted in 2023. Git blame gives you *who* and a commit message gives you a sentence. Then the person leaves and the reason is gone. This tool records the reason at the moment it is discovered and hands it back at the moment it is needed.
@@ -7,7 +9,7 @@ Every repo has decisions that live only in someone's head: why the retry count i
 ## Quick start
 
 ```
-npm install && npm run build && npm link     # puts `reasons` on PATH
+npm install -g git-reasons                   # the command is `reasons`
 cd ~/some/repo && reasons init               # installs hooks + a CLAUDE.md note
 
 reasons add src/retry.ts:14 "3 not 5: 5 tripped the upstream rate limit in prod" --link https://github.com/o/r/issues/412
@@ -22,6 +24,8 @@ reasons doctor --fix                         # re-pin moved, fuzzy and relocated
 reasons doctor --prune                       # delete stale ones
 reasons rm <id>
 ```
+
+From a checkout instead: `npm install && npm run build && npm link`.
 
 Agents can pipe a record in, which sidesteps shell quoting:
 
@@ -60,7 +64,7 @@ Both `Bash` patterns match only at a shell command boundary and ignore quoted st
 
 Each hook invocation is one node process. The work itself is a few milliseconds; node's startup is the cost, and on a slow Windows machine that can be several hundred milliseconds per tool call. If that bothers you, drop the `Bash` matcher from `PostToolUse` and keep only the capture you want.
 
-For agents that are not Claude Code, `reasons mcp` serves the same data over MCP on stdio with no SDK dependency: `reasons_for_file`, `reasons_add`, `reasons_list`, `reasons_rm`. Register it with `claude mcp add reasons -- reasons mcp` or the equivalent in Cursor or Codex.
+For agents that are not Claude Code, `reasons mcp` serves the same data over MCP on stdio with no SDK dependency: `reasons_for_file`, `reasons_add`, `reasons_list`, `reasons_rm`. Register it with `claude mcp add reasons -- reasons mcp` or the equivalent in Cursor or Codex. (Use the installed `reasons` command, not `npx reasons`, which is an unrelated package.)
 
 ## How anchoring works
 
@@ -98,7 +102,7 @@ The evaluator found four resolver and evaluator bugs in its first hour. They are
 `reasons diff origin/main` lists every reason whose anchored lines a branch touches, so a reviewer sees "this change hits three annotated lines" without reading the notes into their head first. A minimal check:
 
 ```yaml
-- run: npm i -g reasons
+- run: npm i -g git-reasons
 - run: reasons doctor                 # fails on fuzzy or stale anchors: re-pin or prune before merging
 - run: reasons diff origin/main       # informational; add --check to fail when annotated lines change
 ```
@@ -112,3 +116,7 @@ The evaluator found four resolver and evaluator bugs in its first hour. They are
 - Symbol-aware anchoring via tree-sitter so a reason can follow a function through a rename of the anchored line itself.
 - An editor gutter marker for humans.
 - Multi-file reasons: one note that spans a caller and a callee.
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Resolver changes come with evaluator numbers, and non-obvious fixes come with a recorded reason. MIT licensed.

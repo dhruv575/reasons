@@ -108,7 +108,7 @@ function init(root: string) {
   // trimmed on purpose (e.g. dropping Bash), are left exactly as they are.
   const isOurs = (c: string): boolean => {
     c = c.trim();
-    if (c === cmd || /^(?:npx\s+)?reasons\s+hook$/.test(c) || /[\\/]reasons[\\/]dist[\\/]cli\.js"?\s+hook$/.test(c)) return true;
+    if (c === cmd || /^(?:npx\s+)?(?:git-)?reasons\s+hook$/.test(c) || /[\\/](?:git-)?reasons[\\/]dist[\\/]cli\.js"?\s+hook$/.test(c)) return true;
     // `node "<anywhere>/dist/cli.js" hook`: ours if that file is this tool (the checkout may be named anything).
     const m = /^node\s+"?((?:.+?[\\/])?dist[\\/]cli\.js)"?\s+hook$/.exec(c);
     if (!m) return false;
