@@ -126,10 +126,18 @@ test("symbol targets, diff, undo detection", () => {
   assert.equal(edit("return fn();", "return await fn();"), "");
 });
 
-test("init is idempotent and mcp answers", () => {
+test("init is idempotent, recognises the local-dist form, and keeps other hooks; mcp answers", () => {
+  // A checkout with any name that runs its own build: `node dist/cli.js hook`, plus someone else's hook in the same group.
+  mkdirSync(join(repo, "dist")); writeFileSync(join(repo, "dist/cli.js"), readFileSync(CLI));
+  mkdirSync(join(repo, ".claude"));
+  writeFileSync(join(repo, ".claude/settings.json"), JSON.stringify({ hooks: { PostToolUse: [
+    { matcher: "Read", hooks: [{ type: "command", command: "my-linter" }, { type: "command", command: "node dist/cli.js hook" }] },
+  ] } }));
   cli(["init"]); cli(["init"]);
   const settings = JSON.parse(readFileSync(join(repo, ".claude/settings.json"), "utf8"));
   assert.equal(settings.hooks.PostToolUse.length, 1);
+  assert.equal(settings.hooks.PostToolUse[0].matcher, "Read", "a trimmed matcher is left alone");
+  assert.deepEqual(settings.hooks.PostToolUse[0].hooks.map((h: { command: string }) => h.command.replace(/^node ".*cli\.js"|^reasons/, "OURS")), ["my-linter", "OURS hook"]);
   assert.equal(settings.hooks.Stop.length, 1);
   assert.match(readFileSync(join(repo, "CLAUDE.md"), "utf8"), /## reasons/);
   const { out } = cli(["mcp"], '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n');

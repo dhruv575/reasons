@@ -110,7 +110,7 @@ function init(root: string) {
     c = c.trim();
     if (c === cmd || /^(?:npx\s+)?reasons\s+hook$/.test(c) || /[\\/]reasons[\\/]dist[\\/]cli\.js"?\s+hook$/.test(c)) return true;
     // `node "<anywhere>/dist/cli.js" hook`: ours if that file is this tool (the checkout may be named anything).
-    const m = /^node\s+"?(.+?[\\/]dist[\\/]cli\.js)"?\s+hook$/.exec(c);
+    const m = /^node\s+"?((?:.+?[\\/])?dist[\\/]cli\.js)"?\s+hook$/.exec(c);
     if (!m) return false;
     const p = isAbsolute(m[1]) ? m[1] : join(root, m[1]);
     try { return readFileSync(p, "utf8").includes("pin the *why*"); } catch { return false; }
