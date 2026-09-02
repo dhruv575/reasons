@@ -15,7 +15,7 @@
     "build": "tsc",
     "prepublishOnly": "npm run build && npm test",
     "dev": "tsx src/cli.ts",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/resolve.test.ts src/hook.test.ts src/eval.test.ts src/cli.test.ts"
   },
   "license": "MIT",
   "devDependencies": {
