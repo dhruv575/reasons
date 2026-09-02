@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execSync } from "node:child_process";
 
 export interface Reason {
@@ -36,8 +36,11 @@ export function repoRoot(from = process.cwd()): string {
   }
 }
 
+/** Repo-relative forward-slash path; throws for anything outside the repo (other dir, other drive). */
 export function toRepoPath(root: string, file: string): string {
-  return relative(root, resolve(file)).split(sep).join("/");
+  const rel = relative(root, resolve(file));
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`${file} is outside ${root}`);
+  return rel.split(sep).join("/");
 }
 
 export function normalize(line: string): string {

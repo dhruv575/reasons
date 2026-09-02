@@ -178,7 +178,7 @@ function onPostEdit(root: string, input: HookInput) {
     emit("PostToolUse",
       `You just restored earlier code in ${repoFile} (\`${snippet}\`), undoing your own change. ` +
       `If the attempt failed for a reason the code doesn't show, pin it to the line so nobody retries it: ` +
-      `\`${cliCmd()} add ${repoFile}:<line> "tried X; failed because Y" --source claude-code\`. Skip if it was a typo.`);
+      `\`${cliCmd()} add ${repoFile} --match "<text on the line>" "tried X; failed because Y" --source claude-code\`. Skip if it was a typo.`);
   }
 }
 
@@ -204,7 +204,7 @@ function onBash(root: string, input: HookInput) {
       emit("PostToolUse",
         `You just reverted or restored code (\`${cmd.slice(0, 80)}\`). Reverts are where reasons get lost: ` +
         `if the approach you backed out is one a future reader (or you, next session) might retry, record why it didn't work ` +
-        `on the line that would tempt them: \`${cliCmd()} add <file>:<line> "tried X; failed because Y" --source claude-code\`. Skip if it was a typo.`);
+        `on the line that would tempt them: \`${cliCmd()} add <file> --match "<text on the line>" "tried X; failed because Y" --source claude-code\`. Skip if it was a typo.`);
     }
     return;
   }
@@ -231,7 +231,7 @@ function onBash(root: string, input: HookInput) {
       emit("PostToolUse",
         `Tests went red -> green after you edited:\n${edits}\n` +
         `If the fix was non-obvious (a value that has to be exactly this, an ordering constraint, a workaround for an upstream quirk), ` +
-        `record the why now while you still know it: \`${cliCmd()} add <file>:<start>-<end> "one line" --source claude-code\`. ` +
+        `record the why now while you still know it: \`${cliCmd()} add <file> --match "<text on the line>" "one line" --source claude-code\`. ` +
         `If it was a plain bug with an obvious fix, skip this.`);
     }
   }
@@ -256,7 +256,7 @@ function onStop(root: string, input: HookInput & { stop_hook_active?: boolean })
       `Before you finish: tests went red -> green after edits to\n` +
       s.unrecordedFix.slice(0, 6).map((e) => `  ${e}`).join("\n") + `\n` +
       `and no reason was recorded. If the fix depends on something a future reader wouldn't guess, record it now: ` +
-      `\`${cliCmd()} add <file>:<start>-<end> "why" --source claude-code\`. If it was obvious, just say so and stop. This is asked once.`,
+      `\`${cliCmd()} add <file> --match "<text on the line>" "why" --source claude-code\`. If it was obvious, just say so and stop. This is asked once.`,
   }));
 }
 

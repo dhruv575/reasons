@@ -19,6 +19,7 @@ const USAGE = `reasons - pin the *why* to the code it explains
 
   reasons add <file>:<start>[-<end>] "<note>"   record a reason for a line range
   reasons add <file>#<symbol> "<note>"          same, anchored to the line that declares <symbol>
+  reasons add <file> --match "<text>" "<note>"  same, anchored to the first line containing <text>
   reasons add --json                             same, from stdin: {"file","start","end","note","source","link"}
   reasons diff [<base>] [--check]                reasons touched by the diff vs HEAD (or <base>); --check exits 1 if any
   reasons show <file>[:<line>] [--json]          live reasons for a file, or just those covering a line
@@ -83,9 +84,11 @@ This repo records the *why* behind non-obvious code in \`.reasons/\`, anchored t
 Hooks surface live reasons when you Read a file and warn before you edit an annotated line. Treat those notes as
 authoritative: do not simplify or remove an annotated line without addressing the note.
 
-When you discover a non-obvious reason (a fix after a failing test, a revert, a "so that's why"), record it in one line:
+When you discover a non-obvious reason (a fix after a failing test, a revert, a "so that's why"), record it in one line.
+Anchor by text or symbol rather than counting lines; the command echoes the anchored line so you can check it:
 
-    ${cliCmd()} add <file>:<start>-<end> "why" --source claude-code
+    ${cliCmd()} add <file> --match "<unique text on the line>" "why" --source claude-code
+    ${cliCmd()} add <file>#<functionName> "why" --source claude-code
 
 A good reason names the constraint and what breaks without it, not what the code does:
   good: "3 not 5: 5 retries tripped the upstream rate limit in prod (#412)"
@@ -127,6 +130,7 @@ async function main(argv: string[]) {
   const args = argv.slice();
   let source = takeOpt(args, "--source") ?? "cli";
   let link = takeOpt(args, "--link");
+  const match = takeOpt(args, "--match");
   const json = args.includes("--json");
   const [cmd, ...rest] = args.filter((a) => a !== "--json");
   const root = repoRoot();
@@ -140,6 +144,15 @@ async function main(argv: string[]) {
         if (j.source) source = String(j.source);
         if (j.link) link = String(j.link);
         if (!file || !start || !note) throw new Error("--json needs file, start, note");
+      } else if (match) {
+        // `add <file> --match "<text>" "<note>"`: anchor the first line containing <text>. No line counting.
+        const [target, ...noteParts] = rest;
+        note = noteParts.join(" ").trim();
+        if (!target || !note) throw new Error(USAGE);
+        file = target.replace(/:\d+(-\d+)?$/, "");
+        const idx = readLines(file).findIndex((l) => l.includes(match));
+        if (idx < 0) throw new Error(`no line in ${file} contains "${match}"`);
+        start = end = idx + 1;
       } else {
         const [target, ...noteParts] = rest;
         note = noteParts.join(" ").trim();
@@ -158,7 +171,9 @@ async function main(argv: string[]) {
       const r = newReason(root, repoFile, note, anchor, source);
       if (link) r.link = link;
       const path = saveReason(root, r);
-      console.log(`recorded ${r.id} -> ${toRepoPath(root, path)}`);
+      // Echo the anchored text: line numbers are easy to get wrong by one, and a note on the wrong line is worse than none.
+      const preview = anchor.lines.slice(0, 3).map((l, i) => `    L${start + i}: ${l.trim().slice(0, 100)}`).join("\n") + (anchor.lines.length > 3 ? `\n    ... (${anchor.lines.length} lines)` : "");
+      console.log(`recorded ${r.id} -> ${toRepoPath(root, path)}\n${preview}`);
       return;
     }
     case "show":

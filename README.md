@@ -11,6 +11,7 @@ npm install && npm run build && npm link     # puts `reasons` on PATH
 cd ~/some/repo && reasons init               # installs hooks + a CLAUDE.md note
 
 reasons add src/retry.ts:14 "3 not 5: 5 tripped the upstream rate limit in prod" --link https://github.com/o/r/issues/412
+reasons add src/retry.ts --match "MAX = 3" "..."   # anchor to the first line containing that text
 reasons add src/retry.ts#retry "..."         # anchor to the line that declares `retry`
 reasons show src/retry.ts                    # live reasons for a file (--json for machines)
 reasons diff origin/main                     # reasons touched by a diff; --check exits 1 for CI
@@ -38,6 +39,8 @@ Name the constraint and what breaks without it, not what the code does.
 
 Anchor the line someone would be tempted to change, not the whole function. Adding the same note to the same lines twice is a no-op.
 
+Prefer `--match "text"` or `#symbol` over line numbers. Agents and humans both miscount lines, and a note on the wrong line is worse than no note. Whatever form you use, `add` echoes the anchored text back so you can check it.
+
 ## How agents meet it
 
 Telling an agent "remember to run the CLI" does not work. Agents forget the way humans do, only faster. So everything here is structural: reasons reach the agent without it asking, and capture is prompted by hooks at the moment a reason is discovered.
@@ -54,6 +57,8 @@ Telling an agent "remember to run the CLI" does not work. Agents forget the way 
 | on `Stop` | if a red-to-green fix went unrecorded, one final question before the session ends. Asked once, never repeated |
 
 Both `Bash` patterns match only at a shell command boundary and ignore quoted strings, so a command that merely mentions `git checkout --` does not fire.
+
+Each hook invocation is one node process. The work itself is a few milliseconds; node's startup is the cost, and on a slow Windows machine that can be several hundred milliseconds per tool call. If that bothers you, drop the `Bash` matcher from `PostToolUse` and keep only the capture you want.
 
 For agents that are not Claude Code, `reasons mcp` serves the same data over MCP on stdio with no SDK dependency: `reasons_for_file`, `reasons_add`, `reasons_list`, `reasons_rm`. Register it with `claude mcp add reasons -- reasons mcp` or the equivalent in Cursor or Codex.
 
@@ -87,6 +92,16 @@ Planting anchors one commit before HEAD-n and resolving one commit later, over t
 (Last 60 commits of each, 5 anchors per changed file. The execa deleted-line sample is small, 38 lines.) Twenty commits apart on commander the misleading rate is about 2%, nearly all of it inside the lockfile, which the evaluator now skips.
 
 The evaluator found four resolver and evaluator bugs in its first hour. They are recorded in this repo's own `.reasons/`, on the lines they explain, which is the point.
+
+## In review and CI
+
+`reasons diff origin/main` lists every reason whose anchored lines a branch touches, so a reviewer sees "this change hits three annotated lines" without reading the notes into their head first. A minimal check:
+
+```yaml
+- run: npm i -g reasons
+- run: reasons doctor                 # fails on fuzzy or stale anchors: re-pin or prune before merging
+- run: reasons diff origin/main       # informational; add --check to fail when annotated lines change
+```
 
 ## Tests
 
