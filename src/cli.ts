@@ -15,7 +15,7 @@ const USAGE = `reasons - pin the *why* to the code it explains
   reasons add --json                             same, from stdin: {"file","start","end","note","source"}
   reasons show <file> [--json]                   print live reasons for a file
   reasons list [--json]                          print every reason in the repo
-  reasons doctor                                 list moved/fuzzy/stale reasons repo-wide
+  reasons doctor [--fix]                         list moved/fuzzy/stale reasons; --fix re-pins moved and fuzzy ones
   reasons rm <id>                                delete a reason
   reasons hook                                   Claude Code hook entry point (reads JSON on stdin)
   reasons init                                   install the hooks + CLAUDE.md note into the current repo
@@ -135,13 +135,27 @@ function main(argv: string[]) {
       return;
     }
     case "doctor": {
+      // moved: fine, code shifted; re-pin with --fix.  fuzzy: the line changed; re-pin or re-read the note.
+      // stale: gone; the note is hidden from agents until someone deletes or re-anchors it.
+      const fix = rest.includes("--fix");
       const files = [...new Set(loadReasons(root).map((r) => r.file))];
-      let bad = 0;
+      let moved = 0, fuzzy = 0, stale = 0, fixed = 0;
       for (const f of files) for (const it of resolveFile(root, f)) {
-        if (it.res.status !== "exact") { bad++; console.log(fmt(it) + "\n"); }
+        const { status, startLine, endLine } = it.res;
+        if (status === "exact") continue;
+        if (status === "moved") moved++; else if (status === "fuzzy") fuzzy++; else stale++;
+        console.log(fmt(it) + "
+");
+        if (fix && status !== "stale" && startLine && endLine) {
+          const abs = join(root, f);
+          it.reason.anchor = makeAnchor(readLines(abs), startLine, endLine);
+          saveReason(root, it.reason); fixed++;
+        }
       }
-      console.log(bad ? `${bad} reason(s) need attention` : "all reasons anchored exactly");
-      process.exitCode = bad ? 1 : 0;
+      const parts = [moved && `${moved} moved`, fuzzy && `${fuzzy} fuzzy`, stale && `${stale} stale`].filter(Boolean);
+      if (!parts.length) console.log("all reasons anchored exactly");
+      else console.log(parts.join(", ") + (fix ? `; re-pinned ${fixed}` : moved + fuzzy ? "; run doctor --fix to re-pin the moved/fuzzy ones" : ""));
+      process.exitCode = fuzzy + stale ? 1 : 0;
       return;
     }
     case "list": {
