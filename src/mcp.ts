@@ -91,7 +91,7 @@ export function serveMcp(root: string): void {
     try {
       switch (method) {
         case "initialize":
-          return reply({ protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "reasons", version: "0.2.0" } });
+          return reply({ protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "reasons", version: "0.3.0" } });
         case "notifications/initialized":
         case "ping":
           return reply({});

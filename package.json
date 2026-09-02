@@ -1,6 +1,6 @@
 {
   "name": "reasons",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "files": ["dist", "README.md"],
   "engines": { "node": ">=20.11" },
   "keywords": ["annotations", "code-comments", "claude-code", "hooks", "mcp", "why"],
