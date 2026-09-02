@@ -1,0 +1,25 @@
+{
+  "id": "b9cfa752",
+  "file": "src/resolve.ts",
+  "note": "0.6 chosen empirically: 0.5 let a one-token line match unrelated code, 0.7 lost renames like MAX->LIMIT",
+  "anchor": {
+    "lines": [
+      "const FUZZY_THRESHOLD = 0.6;"
+    ],
+    "before": [
+      "  score: number;        // 0..1 similarity of matched region to anchor",
+      "}",
+      ""
+    ],
+    "after": [
+      "",
+      "/** Similarity between two lines: 1 if equal after whitespace normalisation, else token Jaccard. */",
+      "function lineSim(a: string, b: string): number {"
+    ],
+    "startLine": 13,
+    "hash": "872b3e3a5261"
+  },
+  "createdAt": "2026-09-02T01:01:59.211Z",
+  "author": "Dhruv Gupta",
+  "source": "claude-code"
+}
