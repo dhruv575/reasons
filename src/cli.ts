@@ -1,19 +1,25 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import {
   repoRoot, toRepoPath, makeAnchor, normalize, newReason, saveReason, deleteReason, loadReasons, type Reason,
 } from "./store.js";
 import { resolveAnchor, type Resolution } from "./resolve.js";
 import { runHook } from "./hook.js";
+import { runEval, formatEval } from "./eval.js";
 
 const USAGE = `reasons - pin the *why* to the code it explains
 
   reasons add <file>:<start>[-<end>] "<note>"   record a reason for a line range
-  reasons show <file>                            print live reasons for a file
+  reasons add --json                             same, from stdin: {"file","start","end","note","source"}
+  reasons show <file> [--json]                   print live reasons for a file
   reasons doctor                                 list moved/fuzzy/stale reasons repo-wide
   reasons rm <id>                                delete a reason
-  reasons hook                                   Claude Code PostToolUse hook (reads JSON on stdin)
+  reasons hook                                   Claude Code hook entry point (reads JSON on stdin)
+  reasons init                                   install the hooks + CLAUDE.md note into the current repo
+  reasons eval [--repo p] [--commits N] [--samples M] [--span S] [--seed K] [-v]
+                                                 measure anchor survival across a repo's git history
 
 Options: --source <name>   who/what recorded it (default: cli)
 `;
@@ -45,6 +51,47 @@ function fmt({ reason, res }: Resolved): string {
   return `${reason.file}:${where}${tag}  (${reason.id})\n    ${reason.note}\n    -- ${meta}, ${reason.createdAt.slice(0, 10)}`;
 }
 
+const claudeMdNote = () => `
+## reasons
+
+This repo records the *why* behind non-obvious code in \`.reasons/\`, anchored to content rather than line numbers.
+Hooks surface live reasons when you Read a file and warn before you edit an annotated line. Treat those notes as
+authoritative: do not simplify or remove an annotated line without addressing the note.
+
+When you discover a non-obvious reason (a fix after a failing test, a revert, a "so that's why"), record it in one line:
+
+    ${cliCmd()} add <file>:<start>-<end> "why" --source claude-code
+`;
+
+/** How to invoke this CLI from a shell in any repo: the bare name if linked, else node + absolute path. */
+export function cliCmd(): string {
+  if (process.env.REASONS_CLI) return process.env.REASONS_CLI;
+  const self = fileURLToPath(import.meta.url).replace(/\\/g, "/");
+  return `node "${self}"`;
+}
+
+/** Install hooks + CLAUDE.md note into the repo at `root`. Idempotent. */
+function init(root: string) {
+  const cmd = `${cliCmd()} hook`;
+  const dir = join(root, ".claude"); mkdirSync(dir, { recursive: true });
+  const settingsPath = join(dir, "settings.json");
+  const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf8")) : {};
+  settings.hooks ??= {};
+  const want: Record<string, string> = { PreToolUse: "Edit|MultiEdit|Write", PostToolUse: "Read|Edit|MultiEdit|Write|Bash" };
+  for (const [event, matcher] of Object.entries(want)) {
+    const list: Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }> = (settings.hooks[event] ??= []);
+    const ours = list.find((h) => h.hooks?.some((x) => /reasons|cli\.js" hook/.test(x.command)));
+    if (ours) { ours.matcher = matcher; ours.hooks = [{ type: "command", command: cmd }]; }
+    else list.push({ matcher, hooks: [{ type: "command", command: cmd }] });
+  }
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  const md = join(root, "CLAUDE.md");
+  const existing = existsSync(md) ? readFileSync(md, "utf8") : "";
+  if (!/## reasons/.test(existing)) appendFileSync(md, (existing && !existing.endsWith("\n") ? "\n" : "") + claudeMdNote());
+  mkdirSync(join(root, ".reasons"), { recursive: true });
+  console.log(`installed hooks in ${toRepoPath(root, settingsPath)} and a note in CLAUDE.md`);
+}
+
 function main(argv: string[]) {
   const args = argv.slice();
   let source = "cli";
@@ -55,10 +102,18 @@ function main(argv: string[]) {
 
   switch (cmd) {
     case "add": {
-      const [target, ...noteParts] = rest;
-      const note = noteParts.join(" ").trim();
-      if (!target || !note) throw new Error(USAGE);
-      const { file, start, end } = parseTarget(target);
+      let file: string, start: number, end: number, note: string;
+      if (rest[0] === "--json") {
+        const j = JSON.parse(readFileSync(0, "utf8"));
+        file = String(j.file); start = Number(j.start); end = Number(j.end ?? j.start); note = String(j.note ?? "").trim();
+        if (j.source) source = String(j.source);
+        if (!file || !start || !note) throw new Error("--json needs file, start, note");
+      } else {
+        const [target, ...noteParts] = rest;
+        note = noteParts.join(" ").trim();
+        if (!target || !note) throw new Error(USAGE);
+        ({ file, start, end } = parseTarget(target));
+      }
       const lines = readLines(file);
       if (end > lines.length) throw new Error(`${file} has only ${lines.length} lines`);
       const anchor = makeAnchor(lines, start, end);
@@ -94,6 +149,17 @@ function main(argv: string[]) {
     }
     case "hook":
       return runHook(root);
+    case "init":
+      return init(root);
+    case "eval": {
+      const opt = (name: string, dflt: string) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : dflt; };
+      const opts = {
+        repo: opt("--repo", root), commits: +opt("--commits", "50"), samples: +opt("--samples", "5"),
+        span: +opt("--span", "1"), seed: +opt("--seed", "1"), verbose: rest.includes("-v"),
+      };
+      console.log(formatEval(runEval(opts), opts));
+      return;
+    }
     default:
       console.log(USAGE);
       process.exitCode = cmd ? 1 : 0;

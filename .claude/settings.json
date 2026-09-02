@@ -1,10 +1,10 @@
 {
   "hooks": {
+    "PreToolUse": [
+      { "matcher": "Edit|MultiEdit|Write", "hooks": [{ "type": "command", "command": "node dist/cli.js hook" }] }
+    ],
     "PostToolUse": [
-      {
-        "matcher": "Read",
-        "hooks": [{ "type": "command", "command": "node dist/cli.js hook" }]
-      }
+      { "matcher": "Read|Edit|MultiEdit|Write|Bash", "hooks": [{ "type": "command", "command": "node dist/cli.js hook" }] }
     ]
   }
 }

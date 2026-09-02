@@ -1,0 +1,26 @@
+{
+  "id": "c7a3df18",
+  "file": "src/eval.ts",
+  "note": "git -U0 reports a pure insertion as the old line it was inserted AFTER; without this, every line at an insertion point mapped one row late and the eval showed dozens of phantom drifts",
+  "anchor": {
+    "lines": [
+      "    if (l < h.oldStart || (h.oldLen === 0 && l === h.oldStart)) return { kind: \"same\", lines: [l + delta] };"
+    ],
+    "before": [
+      "  for (const h of hunks) {",
+      "    const oldEnd = h.oldStart + h.oldLen; // exclusive",
+      "    // A pure insertion reports the old line it was inserted *after*, so that line is untouched."
+    ],
+    "after": [
+      "    if (l < oldEnd) { inside = true; break; }",
+      "    delta += h.newLen - h.oldLen;",
+      "  }"
+    ],
+    "startLine": 85,
+    "hash": "ec1bee2d4f64"
+  },
+  "createdAt": "2026-09-02T01:55:20.206Z",
+  "commit": "871a807",
+  "author": "Dhruv Gupta",
+  "source": "claude-code"
+}

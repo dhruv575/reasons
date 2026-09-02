@@ -1,0 +1,26 @@
+{
+  "id": "a43f8b89",
+  "file": "src/eval.ts",
+  "note": "ground truth must search every added line in the file, not just the anchor's own hunk: re-indenting a block splits it across hunks and looked like mass deletion",
+  "anchor": {
+    "lines": [
+      "  const same: number[] = [];"
+    ],
+    "before": [
+      "",
+      "  const target = normalize(oldLines[l - 1]);",
+      "  const tt = toks(oldLines[l - 1]);"
+    ],
+    "after": [
+      "  let bestSim = 0, best: number[] = [];",
+      "  for (const h of hunks) {",
+      "    for (let n = h.newStart; n < h.newStart + h.newLen; n++) {"
+    ],
+    "startLine": 93,
+    "hash": "d21074eced01"
+  },
+  "createdAt": "2026-09-02T01:55:20.541Z",
+  "commit": "871a807",
+  "author": "Dhruv Gupta",
+  "source": "claude-code"
+}
