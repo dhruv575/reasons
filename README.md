@@ -11,6 +11,7 @@ npm install && npm run build
 node dist/cli.js init                    # in any repo: installs hooks + a CLAUDE.md note
 node dist/cli.js add src/retry.ts:14 "3 not 5: 5 tripped the upstream rate limit in prod, see #412"
 node dist/cli.js show src/retry.ts       # add --json for machines
+node dist/cli.js list                    # every reason in the repo
 node dist/cli.js doctor                  # exits 1 if any reason has moved, drifted, or gone stale
 node dist/cli.js rm <id>
 ```
@@ -33,6 +34,7 @@ Telling an agent "remember to run the CLI" does not work. Agents forget the way 
 | before `Edit` / `Write` | if the edit overlaps an annotated region, the note is shown first, with the id to remove it if it no longer applies |
 | after `Bash` runs tests | if tests went red, then you edited, then they went green, a one-line prompt asks for the why. Skippable, capped at three per session |
 | after `Bash` reverts | `git revert`, `git restore`, `git checkout --`, `git reset --hard` trigger a prompt to record why the backed-out approach failed |
+| on `Stop` | if a red-to-green fix went unrecorded, one final question before the session ends. Asked once, never repeated |
 
 Both `Bash` patterns match only at a shell command boundary and ignore quoted strings, so a command that merely mentions `git checkout --` does not fire.
 
@@ -68,4 +70,4 @@ The evaluator found four resolver and evaluator bugs in its first hour. Three of
 
 - Symbol-aware anchoring via tree-sitter so a reason can follow a function through a rename.
 - An MCP server for agents other than Claude Code, and an editor gutter marker for humans.
-- A `Stop` hook that offers one last chance to record before the session ends.
+- Multi-file reasons: one note that spans a caller and a callee.

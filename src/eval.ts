@@ -53,7 +53,7 @@ function mulberry32(seed: number) {
 
 interface Hunk { oldStart: number; oldLen: number; newStart: number; newLen: number }
 
-function parseHunks(diff: string): Hunk[] {
+export function parseHunks(diff: string): Hunk[] {
   const out: Hunk[] = [];
   for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) {
     out.push({ oldStart: +m[1], oldLen: m[2] === undefined ? 1 : +m[2], newStart: +m[3], newLen: m[4] === undefined ? 1 : +m[4] });
@@ -77,7 +77,7 @@ function jaccard(a: Set<string>, b: Set<string>): number {
  * line means it survived (possibly moved, possibly to several places), the most
  * similar line (if similar enough) means it was edited, otherwise it was deleted.
  */
-function mapLine(hunks: Hunk[], oldLines: string[], newLines: string[], l: number): Truth {
+export function mapLine(hunks: Hunk[], oldLines: string[], newLines: string[], l: number): Truth {
   let delta = 0, inside = false;
   for (const h of hunks) {
     const oldEnd = h.oldStart + h.oldLen; // exclusive

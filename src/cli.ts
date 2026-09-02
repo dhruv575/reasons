@@ -14,6 +14,7 @@ const USAGE = `reasons - pin the *why* to the code it explains
   reasons add <file>:<start>[-<end>] "<note>"   record a reason for a line range
   reasons add --json                             same, from stdin: {"file","start","end","note","source"}
   reasons show <file> [--json]                   print live reasons for a file
+  reasons list [--json]                          print every reason in the repo
   reasons doctor                                 list moved/fuzzy/stale reasons repo-wide
   reasons rm <id>                                delete a reason
   reasons hook                                   Claude Code hook entry point (reads JSON on stdin)
@@ -77,12 +78,13 @@ function init(root: string) {
   const settingsPath = join(dir, "settings.json");
   const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf8")) : {};
   settings.hooks ??= {};
-  const want: Record<string, string> = { PreToolUse: "Edit|MultiEdit|Write", PostToolUse: "Read|Edit|MultiEdit|Write|Bash" };
+  const want: Record<string, string | undefined> = { PreToolUse: "Edit|MultiEdit|Write", PostToolUse: "Read|Edit|MultiEdit|Write|Bash", Stop: undefined };
   for (const [event, matcher] of Object.entries(want)) {
     const list: Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }> = (settings.hooks[event] ??= []);
-    const ours = list.find((h) => h.hooks?.some((x) => /reasons|cli\.js" hook/.test(x.command)));
-    if (ours) { ours.matcher = matcher; ours.hooks = [{ type: "command", command: cmd }]; }
-    else list.push({ matcher, hooks: [{ type: "command", command: cmd }] });
+    const ours = list.find((h) => h.hooks?.some((x) => /cli\.js" hook|reasons hook/.test(x.command)));
+    const entry = { ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: cmd }] };
+    if (ours) Object.assign(ours, entry);
+    else list.push(entry);
   }
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   const md = join(root, "CLAUDE.md");
@@ -127,6 +129,7 @@ function main(argv: string[]) {
       const [file] = rest;
       if (!file) throw new Error(USAGE);
       const items = resolveFile(root, toRepoPath(root, file));
+      if (rest.includes("--json")) { console.log(JSON.stringify(items.map(({ reason, res }) => ({ ...reason, anchor: undefined, resolved: res })), null, 2)); return; }
       if (!items.length) { console.log("no reasons recorded for this file"); return; }
       for (const it of items) console.log(fmt(it) + "\n");
       return;
@@ -139,6 +142,14 @@ function main(argv: string[]) {
       }
       console.log(bad ? `${bad} reason(s) need attention` : "all reasons anchored exactly");
       process.exitCode = bad ? 1 : 0;
+      return;
+    }
+    case "list": {
+      const files = [...new Set(loadReasons(root).map((r) => r.file))].sort();
+      const all = files.flatMap((f) => resolveFile(root, f));
+      if (rest.includes("--json")) { console.log(JSON.stringify(all.map(({ reason, res }) => ({ ...reason, anchor: undefined, resolved: res })), null, 2)); return; }
+      if (!all.length) { console.log("no reasons recorded"); return; }
+      for (const it of all) console.log(fmt(it) + "\n");
       return;
     }
     case "rm": {

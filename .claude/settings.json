@@ -5,6 +5,9 @@
     ],
     "PostToolUse": [
       { "matcher": "Read|Edit|MultiEdit|Write|Bash", "hooks": [{ "type": "command", "command": "node dist/cli.js hook" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node dist/cli.js hook" }] }
     ]
   }
 }

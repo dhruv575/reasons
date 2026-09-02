@@ -30,6 +30,8 @@ interface Session {
   editsSinceFail: string[];         // "file:start-end" edited after that failure
   reasonsAtFail?: number;           // how many reasons existed when tests went red
   nudged: number;                   // how many red->green prompts we've issued
+  unrecordedFix?: string[];         // edits from the last red->green that went unrecorded
+  stopAsked?: boolean;              // the one end-of-session question has been asked
 }
 
 // Both patterns only match at a shell command boundary (start, or after ; && || | newline),
@@ -176,6 +178,7 @@ function onBash(root: string, input: HookInput) {
   if (s.testFailedAt !== undefined && s.editsSinceFail.length) {
     const recorded = loadReasons(root).length > (s.reasonsAtFail ?? 0);
     const edits = s.editsSinceFail.slice(0, 6).map((e) => `  ${e}`).join("\n");
+    if (!recorded) s.unrecordedFix = s.editsSinceFail;
     s.testFailedAt = undefined; s.editsSinceFail = [];
     if (!recorded && s.nudged < MAX_NUDGES) {
       s.nudged++;
@@ -189,6 +192,31 @@ function onBash(root: string, input: HookInput) {
   saveSession(id, s);
 }
 
+/**
+ * Session end. One question, once, only if a red->green fix went unrecorded
+ * and nothing was added since. Anything else would train the agent to skip it.
+ */
+function onStop(root: string, input: HookInput & { stop_hook_active?: boolean }) {
+  const id = input.session_id;
+  if (!id || input.stop_hook_active) return; // never loop
+  const s = loadSession(id);
+  if (s.stopAsked || !s.unrecordedFix?.length) return;
+  const recorded = loadReasons(root).length > (s.reasonsAtFail ?? 0);
+  s.stopAsked = true; saveSession(id, s);
+  if (recorded) return;
+  process.stdout.write(JSON.stringify({
+    decision: "block",
+    reason:
+      `Before you finish: tests went red -> green after edits to\n` +
+      s.unrecordedFix.slice(0, 6).map((e) => `  ${e}`).join("\n") + `\n` +
+      `and no reason was recorded. If the fix depends on something a future reader wouldn't guess, record it now: ` +
+      `\`${cliCmd()} add <file>:<start>-<end> "why" --source claude-code\`. If it was obvious, just say so and stop. This is asked once.`,
+  }));
+}
+
+/** Exposed for tests. */
+export const patterns = { TEST_CMD, REVERT_CMD, stripQuotes: (raw: string) => raw.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '""') };
+
 export function runHook(root: string): void {
   let input: HookInput = {};
   try { input = JSON.parse(readFileSync(0, "utf8") || "{}"); } catch { return; }
@@ -198,6 +226,7 @@ export function runHook(root: string): void {
     if (ev === "PreToolUse" && /^(Edit|MultiEdit|Write)$/.test(tool)) return onPreEdit(root, input);
     if (ev === "PostToolUse" && /^(Edit|MultiEdit|Write)$/.test(tool)) return onPostEdit(root, input);
     if (ev === "PostToolUse" && tool === "Bash") return onBash(root, input);
+    if (ev === "Stop") return onStop(root, input);
     // Older payloads without hook_event_name: treat a Read as the read hook.
     if (!ev && tool === "Read") return onRead(root, input);
   } catch { /* never break the agent */ }
