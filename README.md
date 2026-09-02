@@ -45,7 +45,7 @@ Prefer `--match "text"` or `#symbol` over line numbers. Agents and humans both m
 
 Telling an agent "remember to run the CLI" does not work. Agents forget the way humans do, only faster. So everything here is structural: reasons reach the agent without it asking, and capture is prompted by hooks at the moment a reason is discovered.
 
-`reasons init` registers Claude Code hooks, all served by one `reasons hook` entry point:
+`reasons init` registers Claude Code hooks, all served by one `reasons hook` entry point. It only ever adds or updates its own command in `.claude/settings.json`; other hooks in the same group and any matcher you have trimmed are left alone, so re-running it is always safe.
 
 | when | what happens |
 | --- | --- |
@@ -56,7 +56,7 @@ Telling an agent "remember to run the CLI" does not work. Agents forget the way 
 | after an `Edit` that undoes an earlier edit | agents rarely run `git revert`; they edit the old text back. That is detected and prompts the same way |
 | on `Stop` | if a red-to-green fix went unrecorded, one final question before the session ends. Asked once, never repeated |
 
-Both `Bash` patterns match only at a shell command boundary and ignore quoted strings, so a command that merely mentions `git checkout --` does not fire.
+Both `Bash` patterns match only at a shell command boundary and ignore quoted strings, heredocs and comments, so a command that merely mentions `git checkout --` does not fire. Test failure is judged from the summary lines at the end of the output (`2 failed`, `FAIL`, `not ok`, a traceback), never from the word "failed" inside a passing test's name. A red run older than an hour is forgotten. Prompts are budgeted per kind (three red-to-green, two revert, two undo per session) so one kind cannot starve another.
 
 Each hook invocation is one node process. The work itself is a few milliseconds; node's startup is the cost, and on a slow Windows machine that can be several hundred milliseconds per tool call. If that bothers you, drop the `Bash` matcher from `PostToolUse` and keep only the capture you want.
 

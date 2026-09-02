@@ -37,6 +37,16 @@ test("add, duplicate, show, why", () => {
   assert.match(cli(["why", "src/retry.ts:4"]).out, /whole function/);
   assert.doesNotMatch(cli(["why", "src/retry.ts:4"]).out, /3 not 5/);
   assert.match(cli(["add", "src/retry.ts:7", "x"]).out, /only 6 lines/);
+  assert.match(cli(["add", "src/retry.ts:0", "x"]).out, /1-based/);
+  const j = cli(["add", "--json"], '{"file":"src/retry.ts","start":3,"note":"via json","source":"t"}').out;
+  assert.match(j, /^recorded/);
+  const m = cli(["add", "src/retry.ts", "--match", "catch {}", "matched"]).out;
+  assert.match(m, /recorded[^\n]*\n\s+L4: try/);
+  assert.match(cli(["show", "src/retry.ts", "--json"]).out, /"via json"/);
+  writeFileSync(join(repo, ".reasons/bad.json"), '{"file":"src/retry.ts","note":"no anchor"}');
+  assert.match(cli(["show", "src/retry.ts"]).out, /via json/); // malformed record is skipped, not fatal
+  rmSync(join(repo, ".reasons/bad.json"));
+  for (const out of [j, m]) assert.match(cli(["rm", /recorded (\w+)/.exec(out)![1]]).out, /^deleted/);
 });
 
 test("Read hook pushes notes; windowed reads filter", () => {

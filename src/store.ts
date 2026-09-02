@@ -107,6 +107,9 @@ export function loadReasons(root: string, file?: string): Reason[] {
     if (!name.endsWith(".json")) continue;
     try {
       const r = JSON.parse(readFileSync(join(dir, name), "utf8")) as Reason;
+      // One malformed record must not take every reason for the file down with it.
+      if (typeof r?.file !== "string" || typeof r.note !== "string" || !Array.isArray(r.anchor?.lines) || typeof r.anchor.startLine !== "number") continue;
+      r.anchor.before ??= []; r.anchor.after ??= []; r.id ??= name.replace(/\.json$/, "");
       if (!file || r.file === file) out.push(r);
     } catch { /* skip malformed */ }
   }

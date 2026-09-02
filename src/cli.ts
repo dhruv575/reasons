@@ -104,12 +104,18 @@ function init(root: string) {
   const settingsPath = join(dir, "settings.json");
   const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf8")) : {};
   settings.hooks ??= {};
+  // Only ever touch our own hook command. A user's other hooks in the same group, and a matcher they
+  // trimmed on purpose (e.g. dropping Bash), are left exactly as they are.
+  const OURS = /^(?:reasons|npx\s+reasons|node\s+"?[^"]*[\\/]reasons[\\/]dist[\\/]cli\.js"?)\s+hook$/;
   const want: Record<string, string | undefined> = { PreToolUse: "Edit|MultiEdit|Write", PostToolUse: "Read|Edit|MultiEdit|Write|Bash", Stop: undefined };
   for (const [event, matcher] of Object.entries(want)) {
-    const list: Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }> = (settings.hooks[event] ??= []);
-    const ours = list.find((h) => h.hooks?.some((x) => /cli\.js" hook|\breasons hook\b/.test(x.command)));
-    const entry = { ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: cmd }] };
-    if (ours) Object.assign(ours, entry); else list.push(entry);
+    if (!Array.isArray(settings.hooks[event])) settings.hooks[event] = [];
+    const list: Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string }> }> = settings.hooks[event];
+    let found = false;
+    for (const group of list) for (const hk of group.hooks ?? []) {
+      if (typeof hk.command === "string" && OURS.test(hk.command.trim())) { hk.type = "command"; hk.command = cmd; found = true; }
+    }
+    if (!found) list.push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: cmd }] });
   }
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   const md = join(root, "CLAUDE.md");
@@ -138,7 +144,7 @@ async function main(argv: string[]) {
   switch (cmd) {
     case "add": {
       let file: string, start: number, end: number, note: string;
-      if (rest[0] === "--json") {
+      if (json) {
         const j = JSON.parse(readFileSync(0, "utf8"));
         file = String(j.file); start = Number(j.start); end = Number(j.end ?? j.start); note = String(j.note ?? "").trim();
         if (j.source) source = String(j.source);
@@ -161,6 +167,7 @@ async function main(argv: string[]) {
       }
       const lines = readLines(file);
       const count = lines.length - (lines.at(-1) === "" ? 1 : 0); // trailing newline is not a line
+      if (start < 1 || end < start) throw new Error(`bad range ${start}-${end}; lines are 1-based`);
       if (end > count) throw new Error(`${file} has only ${count} lines`);
       const anchor = makeAnchor(lines, start, end);
       if (!anchor.lines.some((l) => normalize(l))) throw new Error("refusing to anchor blank lines; pick a line with content");
@@ -207,7 +214,7 @@ async function main(argv: string[]) {
         const fileGone = !existsSync(join(root, f));
         for (const it of resolveFile(root, f)) {
           const { reason, res } = it;
-          if (res.status === "exact") continue;
+          if (res.status === "exact" || it.movedFrom) continue; // orphans are handled under their own (gone) file
           let target: { file: string; res: typeof res } | undefined;
           if (fileGone) {
             target = relocate(root, reason);

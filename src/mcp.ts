@@ -83,7 +83,8 @@ export function serveMcp(root: string): void {
   rl.on("line", (line) => {
     if (!line.trim()) return;
     let req: { id?: unknown; method?: string; params?: Record<string, unknown> };
-    try { req = JSON.parse(line); } catch { return; }
+    try { req = JSON.parse(line); } catch { return send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } }); }
+    if (!req || typeof req !== "object") return send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request" } });
     const { id, method, params = {} } = req;
     const reply = (result: unknown) => id !== undefined && send({ jsonrpc: "2.0", id, result });
     const fail = (code: number, message: string) => id !== undefined && send({ jsonrpc: "2.0", id, error: { code, message } });

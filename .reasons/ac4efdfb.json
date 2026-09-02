@@ -1,0 +1,26 @@
+{
+  "id": "ac4efdfb",
+  "file": "src/hook.ts",
+  "note": "only match at a shell command boundary and after stripping quotes/heredocs: the first version matched anywhere and fired on a shell line that merely contained 'git checkout --' inside a printf payload while testing the hook itself",
+  "anchor": {
+    "lines": [
+      "const AT_CMD = String.raw`(?:^|[;&|]\\s*|\\n\\s*)(?:cd\\s+\\S+\\s*(?:&&|;)\\s*)?(?:\\w+=\\S*\\s+)*(?:sudo\\s+|env\\s+|time\\s+|timeout\\s+\\S+\\s+)?`;"
+    ],
+    "before": [
+      "// Only match at a shell command boundary (start, or after ; && || | newline), allowing env-var",
+      "// prefixes and wrappers, so a command that merely *mentions* \"git checkout --\" inside a string",
+      "// or a comment does not fire."
+    ],
+    "after": [
+      "const TEST_CMD = new RegExp(AT_CMD + String.raw`(?:(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?(?:test|t)\\b|(?:npx\\s+|pnpm\\s+|yarn\\s+|bunx\\s+)?(?:jest|vitest|mocha|ava|tap|pytest|py\\.test|rspec|phpunit)\\b|(?:\\.\\/)?node_modules\\/\\.bin\\/(?:jest|vitest|mocha|ava)\\b|python3?\\s+-m\\s+pytest\\b|cargo\\s+test\\b|go\\s+test\\b|dotnet\\s+test\\b|mvn\\s+test\\b|gradle\\s+test\\b|make\\s+test\\b|(?:npx\\s+)?tsx\\s+--test\\b|node\\s+(?:--[\\w-]+(?:\\s+\\S+)?\\s+)*(?:--test\\b|\\S+\\s+--test\\b))`);",
+      "const REVERT_CMD = new RegExp(AT_CMD + String.raw`git\\s+(?:-C\\s+\\S+\\s+)?(?:revert\\b|restore\\b(?!\\s+--staged)|checkout\\s+(?:--|\\.(?=\\s|$)|HEAD\\S*|[0-9a-f]{7,40}\\s+--)|reset\\s+--hard\\b|stash\\s+pop\\b)`);",
+      "// Test runners summarise failures with a count or a fixed token. Bare \"failed\" is avoided: it appears in passing test names."
+    ],
+    "startLine": 47,
+    "hash": "605d26813203"
+  },
+  "createdAt": "2026-09-02T02:40:15.711Z",
+  "commit": "481db2b",
+  "author": "Dhruv Gupta",
+  "source": "claude-code"
+}
